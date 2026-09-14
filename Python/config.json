@@ -1,0 +1,323 @@
+{
+  "bodies": {
+    "torso": {
+      "pos": [
+        -0.097945,
+        1.147418
+      ],
+      "angle_deg": -89.121,
+      "mass": 8.0,
+      "half_length": 0.3
+    },
+    "head": {
+      "pos": [
+        -0.104388,
+        1.567369
+      ],
+      "angle_deg": -89.121,
+      "mass": 2.0,
+      "half_length": 0.12
+    },
+    "thigh_l": {
+      "pos": [
+        -0.033149,
+        0.635848
+      ],
+      "angle_deg": -74.121,
+      "mass": 3.0,
+      "half_length": 0.22
+    },
+    "shin_l": {
+      "pos": [
+        0.030419,
+        0.204269
+      ],
+      "angle_deg": -89.121,
+      "mass": 2.0,
+      "half_length": 0.22
+    },
+    "upper_arm_l": {
+      "pos": [
+        -0.031121,
+        1.282161
+      ],
+      "angle_deg": -66.621,
+      "mass": 1.5,
+      "half_length": 0.18
+    },
+    "lower_arm_l": {
+      "pos": [
+        0.043066,
+        0.93696
+      ],
+      "angle_deg": -89.121,
+      "mass": 1.0,
+      "half_length": 0.18
+    },
+    "thigh_r": {
+      "pos": [
+        -0.147016,
+        0.634101
+      ],
+      "angle_deg": -104.121,
+      "mass": 3.0,
+      "half_length": 0.22
+    },
+    "shin_r": {
+      "pos": [
+        -0.197315,
+        0.200775
+      ],
+      "angle_deg": -89.121,
+      "mass": 2.0,
+      "half_length": 0.22
+    },
+    "upper_arm_r": {
+      "pos": [
+        -0.168871,
+        1.280047
+      ],
+      "angle_deg": -111.621,
+      "mass": 1.5,
+      "half_length": 0.18
+    },
+    "lower_arm_r": {
+      "pos": [
+        -0.232433,
+        0.932733
+      ],
+      "angle_deg": -89.121,
+      "mass": 1.0,
+      "half_length": 0.18
+    }
+  },
+  "joints": [
+    {
+      "body_a": "torso",
+      "anchor_a": [
+        -0.3,
+        0.0
+      ],
+      "body_b": "head",
+      "anchor_b": [
+        0.12,
+        0.0
+      ],
+      "min_angle_deg": -22.918,
+      "max_angle_deg": 22.918,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": 0.0,
+        "stiffness": 20.0,
+        "damping": 4.0,
+        "max_torque": 15.0
+      }
+    },
+    {
+      "body_a": "torso",
+      "anchor_a": [
+        -0.3,
+        0.0
+      ],
+      "body_b": "upper_arm_l",
+      "anchor_b": [
+        -0.18,
+        0.0
+      ],
+      "min_angle_deg": -171.887,
+      "max_angle_deg": 57.296,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": 22.5,
+        "stiffness": 20.0,
+        "damping": 4.0,
+        "max_torque": 15.0
+      }
+    },
+    {
+      "body_a": "upper_arm_l",
+      "anchor_a": [
+        0.18,
+        0.0
+      ],
+      "body_b": "lower_arm_l",
+      "anchor_b": [
+        -0.18,
+        0.0
+      ],
+      "min_angle_deg": -143.239,
+      "max_angle_deg": 5.73,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -22.5,
+        "stiffness": 20.0,
+        "damping": 4.0,
+        "max_torque": 15.0
+      }
+    },
+    {
+      "body_a": "torso",
+      "anchor_a": [
+        0.3,
+        0.0
+      ],
+      "body_b": "thigh_l",
+      "anchor_b": [
+        -0.22,
+        0.0
+      ],
+      "min_angle_deg": -131.78,
+      "max_angle_deg": 131.78,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": 15.0,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    },
+    {
+      "body_a": "thigh_l",
+      "anchor_a": [
+        0.22,
+        0.0
+      ],
+      "body_b": "shin_l",
+      "anchor_b": [
+        -0.22,
+        0.0
+      ],
+      "min_angle_deg": -17.865,
+      "max_angle_deg": 131.78,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -15.0,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    },
+    {
+      "body_a": "torso",
+      "anchor_a": [
+        -0.3,
+        0.0
+      ],
+      "body_b": "upper_arm_r",
+      "anchor_b": [
+        -0.18,
+        0.0
+      ],
+      "min_angle_deg": -57.296,
+      "max_angle_deg": 171.887,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -22.5,
+        "stiffness": 20.0,
+        "damping": 4.0,
+        "max_torque": 15.0
+      }
+    },
+    {
+      "body_a": "upper_arm_r",
+      "anchor_a": [
+        0.18,
+        0.0
+      ],
+      "body_b": "lower_arm_r",
+      "anchor_b": [
+        -0.18,
+        0.0
+      ],
+      "min_angle_deg": -5.73,
+      "max_angle_deg": 143.239,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": 22.5,
+        "stiffness": 20.0,
+        "damping": 4.0,
+        "max_torque": 15.0
+      }
+    },
+    {
+      "body_a": "torso",
+      "anchor_a": [
+        0.3,
+        0.0
+      ],
+      "body_b": "thigh_r",
+      "anchor_b": [
+        -0.22,
+        0.0
+      ],
+      "min_angle_deg": -131.78,
+      "max_angle_deg": 131.78,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -15.0,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    },
+    {
+      "body_a": "thigh_r",
+      "anchor_a": [
+        0.22,
+        0.0
+      ],
+      "body_b": "shin_r",
+      "anchor_b": [
+        -0.22,
+        0.0
+      ],
+      "min_angle_deg": -131.78,
+      "max_angle_deg": 17.865,
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": 15.0,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    }
+  ],
+  "pins": [
+    {
+      "body": "shin_l",
+      "anchor": [
+        0.22,
+        0.0
+      ],
+      "world_position": [
+        0.033794,
+        -0.015705
+      ],
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -89.121,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    },
+    {
+      "body": "shin_r",
+      "anchor": [
+        0.22,
+        0.0
+      ],
+      "world_position": [
+        -0.19394,
+        -0.019199
+      ],
+      "motor": {
+        "enabled": true,
+        "target_angle_deg": -89.121,
+        "stiffness": 400.0,
+        "damping": 60.0,
+        "max_torque": 120.0
+      }
+    }
+  ]
+}
