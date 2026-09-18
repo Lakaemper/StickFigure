@@ -5,6 +5,7 @@ import skeleton.Body;
 import skeleton.Bone;
 import skeleton.PhysicalUpgrades;
 import skeleton.Tip;
+import skeleton.attachables.Anchor;
 import skeleton.attachables.FrictionPad;
 import skeleton.attachables.Joint;
 import skeleton.attachables.Motor;
@@ -42,6 +43,23 @@ public class World {
     }
 
     // -------------------------------------------------------------------------
+    // pure position-based re-solve: no gravity, no Motor/Anchor forces, no
+    // velocity change -- just Bone/Joint geometry settling given wherever the
+    // tips currently are. For posing the body kinematically (e.g. while
+    // dragging an Anchor around), so the rest of the chain follows the drag
+    // geometrically without fighting whatever forces would normally be active.
+    public void resolvePositions() {
+        for (int i = 0; i < solverIterations; i++) {
+            for (Bone b : body.bone) {
+                b.enforceLength();
+            }
+            for (Joint j : body.joints) {
+                j.enforceCoincidence();
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     private void substep(double subDt) {
         // 1. forces: gravity is an acceleration (mass-independent), motors are
         // genuine forces realized via Motor.apply()
@@ -57,6 +75,9 @@ public class World {
         }
         for (Motor m : body.motors) {
             m.apply(subDt);
+        }
+        for (Anchor a : body.anchors) {
+            a.apply(subDt);
         }
 
         // 2. integrate

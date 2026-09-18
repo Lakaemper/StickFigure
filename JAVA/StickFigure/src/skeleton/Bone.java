@@ -9,6 +9,11 @@ public class Bone {
     public Tip[] tips = new Tip[2];
     public double length;
     public double angleDeg;
+    public double mass; // the TRUE structural mass -- unlike tips[*].invMass, an
+                         // Anchor never touches this when it temporarily zeroes a
+                         // tip's invMass, so it's always safe to read back out
+                         // (e.g. for Body.storePose) regardless of what's anchored
+                         // right now.
 
     // -------------------------------------------------------------------------
     public Bone(){
@@ -34,14 +39,23 @@ public class Bone {
     }
 
     // -------------------------------------------------------------------------
+    // an ellipse along the tip0->tip1 axis: major radius half the tip-to-tip
+    // distance (so the ellipse's ends land exactly on the tips), minor radius
+    // a third of that. Uses the tips' current positions/angle() rather than
+    // length/angleDeg, which are only the build-time values and go stale the
+    // moment physics starts moving the tips.
     public void draw() {
-        Main.viewer.drawLine(tips[0].position, tips[1].position);
+        TupleD center = tips[0].position.add(tips[1].position).times(0.5);
+        double majorRadius = tips[1].position.sub(tips[0].position).length() / 2.0;
+        double minorRadius = majorRadius / 3.0;
+        Main.viewer.drawEllipse(center, majorRadius, minorRadius, angle());
     }
 
     // -------------------------------------------------------------------------
     // splits `mass` evenly onto this bone's two tips, as inverse mass (0 = fixed).
     // mass <= 0 fixes both tips instead of dividing by zero.
     public void setMass(double mass) {
+        this.mass = mass;
         double invMass = mass > 0.0 ? 2.0 / mass : 0.0;
         tips[0].invMass = invMass;
         tips[1].invMass = invMass;

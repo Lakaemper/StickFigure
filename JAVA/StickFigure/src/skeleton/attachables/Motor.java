@@ -52,7 +52,7 @@ public class Motor extends Attachable {
         Tip jointTip1 = bone1.tips[joint.tipIdx[1]];
         Tip farTip1 = bone1.tips[farTipIdx1];
 
-        double relAngle = normalizeAngle(angleOf(jointTip1, farTip1) - angleOf(jointTip0, farTip0));
+        double relAngle = relativeAngleRad(joint);
         double relAngVel = angularVelocityOf(jointTip1, farTip1) - angularVelocityOf(jointTip0, farTip0);
 
         double error = normalizeAngle(Math.toRadians(targetAngleDeg) - relAngle);
@@ -77,6 +77,22 @@ public class Motor extends Attachable {
         TupleD perpendicular = new TupleD(-u.second, u.first);
         TupleD force = perpendicular.times(torque / leverLength);
         farTip.applyForce(force, dt);
+    }
+
+    // -------------------------------------------------------------------------
+    // this joint's current relative angle (bones[1] relative to bones[0],
+    // joint-outward convention), in radians -- the same quantity apply()'s PD
+    // error is measured against. Exposed for e.g. Body.storePose, which needs
+    // to write a TargetAngle that reproduces the CURRENT pose, not just copy
+    // whatever this motor's own in-progress target happens to be.
+    public static double relativeAngleRad(Joint joint) {
+        Bone bone0 = joint.bones[0];
+        Bone bone1 = joint.bones[1];
+        Tip jointTip0 = bone0.tips[joint.tipIdx[0]];
+        Tip farTip0 = bone0.tips[1 - joint.tipIdx[0]];
+        Tip jointTip1 = bone1.tips[joint.tipIdx[1]];
+        Tip farTip1 = bone1.tips[1 - joint.tipIdx[1]];
+        return normalizeAngle(angleOf(jointTip1, farTip1) - angleOf(jointTip0, farTip0));
     }
 
     // -------------------------------------------------------------------------

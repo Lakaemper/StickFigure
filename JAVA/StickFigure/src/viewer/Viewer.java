@@ -9,12 +9,15 @@ import java.awt.Graphics2D;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
+import java.awt.geom.AffineTransform;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.Timer;
@@ -29,9 +32,13 @@ public class Viewer extends JFrame {
     private static final int ORIGIN_Y = 600;
 
     private static final int STEP_DELAY_MS = 16; // ~60fps while playing
+    private static final int CLICK_THRESHOLD_PIXELS = 5; // press-release moves less than this = a click, not a drag
+
+    private static final Color ELLIPSE_FILL = new Color(255, 0, 0, (int) Math.round(0.7 * 255));
 
     private final List<TupleD[]> lines = new ArrayList<>();
     private final List<Circle> circles = new ArrayList<>();
+    private final List<Ellipse> ellipses = new ArrayList<>();
     private boolean floorVisible = false;
     private final DrawPanel panel = new DrawPanel();
 
@@ -41,14 +48,34 @@ public class Viewer extends JFrame {
     public Runnable onStep;
     public Runnable onReset;
 
+    // StorePose/LoadPose: Viewer owns the file-chooser dialogs (a Swing
+    // concern, same as everything else here), and just hands the chosen file
+    // to whoever wires this up -- it has no idea what a "pose" is.
+    public Consumer<File> onStorePose;
+    public Consumer<File> onLoadPose;
+
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
     // (Main) is responsible for e.g. finding the nearest tip and moving it.
     public Consumer<TupleD> onDragStart;
     public BiConsumer<TupleD, TupleD> onDragEnd;
 
+    // fired instead of onDragEnd when the mouse barely moved between press and
+    // release -- a plain click rather than a drag. Second argument is whether
+    // shift was held.
+    public BiConsumer<TupleD, Boolean> onClick;
+
+    // right-button drag -- a completely separate gesture from the left-button
+    // ones above (e.g. repositioning an existing anchor rather than kicking a
+    // tip), so it gets its own start/continue hooks instead of reusing onDrag*.
+    public Consumer<TupleD> onRightDragStart;
+    public Consumer<TupleD> onRightDrag;
+
     private TupleD dragStartWorld;
     private TupleD dragCurrentWorld;
+    private int pressScreenX;
+    private int pressScreenY;
+    private boolean rightDragActive;
 
     private boolean playing = false;
     private final JButton playPauseButton = new JButton("Play");
@@ -61,10 +88,26 @@ public class Viewer extends JFrame {
     private static class Circle {
         TupleD center;
         double radius;
+        Color color;
 
-        Circle(TupleD center, double radius) {
+        Circle(TupleD center, double radius, Color color) {
             this.center = center;
             this.radius = radius;
+            this.color = color;
+        }
+    }
+
+    private static class Ellipse {
+        TupleD center;
+        double majorRadius; // half the length of the main axis
+        double minorRadius;
+        double angleRad;    // main axis direction, world convention (ccw from +x, y-up)
+
+        Ellipse(TupleD center, double majorRadius, double minorRadius, double angleRad) {
+            this.center = center;
+            this.majorRadius = majorRadius;
+            this.minorRadius = minorRadius;
+            this.angleRad = angleRad;
         }
     }
 
@@ -84,6 +127,15 @@ public class Viewer extends JFrame {
         panel.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
+                if (e.getButton() == MouseEvent.BUTTON3) {
+                    rightDragActive = true;
+                    if (onRightDragStart != null) {
+                        onRightDragStart.accept(toWorld(e.getX(), e.getY()));
+                    }
+                    return;
+                }
+                pressScreenX = e.getX();
+                pressScreenY = e.getY();
                 dragStartWorld = toWorld(e.getX(), e.getY());
                 dragCurrentWorld = dragStartWorld;
                 if (onDragStart != null) {
@@ -94,10 +146,23 @@ public class Viewer extends JFrame {
 
             @Override
             public void mouseReleased(MouseEvent e) {
+                if (rightDragActive) {
+                    rightDragActive = false;
+                    return;
+                }
                 if (dragStartWorld != null) {
-                    dragCurrentWorld = toWorld(e.getX(), e.getY());
-                    if (onDragEnd != null) {
-                        onDragEnd.accept(dragStartWorld, dragCurrentWorld);
+                    int dx = e.getX() - pressScreenX;
+                    int dy = e.getY() - pressScreenY;
+                    boolean wasClick = dx * dx + dy * dy <= CLICK_THRESHOLD_PIXELS * CLICK_THRESHOLD_PIXELS;
+                    if (wasClick) {
+                        if (onClick != null) {
+                            onClick.accept(dragStartWorld, e.isShiftDown());
+                        }
+                    } else {
+                        dragCurrentWorld = toWorld(e.getX(), e.getY());
+                        if (onDragEnd != null) {
+                            onDragEnd.accept(dragStartWorld, dragCurrentWorld);
+                        }
                     }
                 }
                 dragStartWorld = null;
@@ -108,6 +173,12 @@ public class Viewer extends JFrame {
         panel.addMouseMotionListener(new MouseMotionAdapter() {
             @Override
             public void mouseDragged(MouseEvent e) {
+                if (rightDragActive) {
+                    if (onRightDrag != null) {
+                        onRightDrag.accept(toWorld(e.getX(), e.getY()));
+                    }
+                    return;
+                }
                 if (dragStartWorld != null) {
                     dragCurrentWorld = toWorld(e.getX(), e.getY());
                     panel.repaint();
@@ -118,6 +189,13 @@ public class Viewer extends JFrame {
 
     private static TupleD toWorld(int screenX, int screenY) {
         return new TupleD((screenX - ORIGIN_X) / SCALE, (ORIGIN_Y - screenY) / SCALE);
+    }
+
+    // a length in world units that renders as a fixed number of screen pixels
+    // regardless of SCALE -- e.g. for a UI marker that shouldn't grow/shrink
+    // if the viewer's zoom ever changes.
+    public static double pixelsToWorldLength(double pixels) {
+        return pixels / SCALE;
     }
 
     private JPanel buildControls() {
@@ -135,9 +213,29 @@ public class Viewer extends JFrame {
         JButton resetButton = new JButton("Reset");
         resetButton.addActionListener(e -> runReset());
 
+        JButton storePoseButton = new JButton("StorePose");
+        storePoseButton.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Store Pose");
+            if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION && onStorePose != null) {
+                onStorePose.accept(chooser.getSelectedFile());
+            }
+        });
+
+        JButton loadPoseButton = new JButton("LoadPose");
+        loadPoseButton.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Load Pose");
+            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION && onLoadPose != null) {
+                onLoadPose.accept(chooser.getSelectedFile());
+            }
+        });
+
         controls.add(playPauseButton);
         controls.add(stepButton);
         controls.add(resetButton);
+        controls.add(storePoseButton);
+        controls.add(loadPoseButton);
         return controls;
     }
 
@@ -161,13 +259,25 @@ public class Viewer extends JFrame {
     }
 
     public void drawCircle(TupleD center, double radius) {
-        circles.add(new Circle(center, radius));
+        drawCircle(center, radius, Color.BLACK);
+    }
+
+    public void drawCircle(TupleD center, double radius, Color color) {
+        circles.add(new Circle(center, radius, color));
+        panel.repaint();
+    }
+
+    // an ellipse whose main axis has length 2*majorRadius, pointing in
+    // direction angleRad (world convention: counterclockwise from +x, y up).
+    public void drawEllipse(TupleD center, double majorRadius, double minorRadius, double angleRad) {
+        ellipses.add(new Ellipse(center, majorRadius, minorRadius, angleRad));
         panel.repaint();
     }
 
     public void clear() {
         lines.clear();
         circles.clear();
+        ellipses.clear();
         panel.repaint();
     }
 
@@ -210,7 +320,27 @@ public class Viewer extends JFrame {
                 int ccx = cx + (int) Math.round(c.center.first * SCALE);
                 int ccy = cy - (int) Math.round(c.center.second * SCALE);
                 int r = (int) Math.round(c.radius * SCALE);
+                g2.setColor(c.color);
                 g2.drawOval(ccx - r, ccy - r, 2 * r, 2 * r);
+            }
+
+            for (Ellipse e : ellipses) {
+                int ecx = cx + (int) Math.round(e.center.first * SCALE);
+                int ecy = cy - (int) Math.round(e.center.second * SCALE);
+                int majorPx = (int) Math.round(e.majorRadius * SCALE);
+                int minorPx = (int) Math.round(e.minorRadius * SCALE);
+
+                // screen y is flipped relative to world y, which flips the
+                // sense of rotation too -- negate the world angle to compensate.
+                AffineTransform saved = g2.getTransform();
+                g2.translate(ecx, ecy);
+                g2.rotate(-e.angleRad);
+                g2.setColor(ELLIPSE_FILL);
+                g2.fillOval(-majorPx, -minorPx, 2 * majorPx, 2 * minorPx);
+                g2.setColor(Color.BLACK);
+                g2.setStroke(new BasicStroke(1));
+                g2.drawOval(-majorPx, -minorPx, 2 * majorPx, 2 * minorPx);
+                g2.setTransform(saved);
             }
 
             if (dragStartWorld != null) {
