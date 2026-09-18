@@ -1,4 +1,5 @@
 from vec2 import Vec2
+from body import Body
 from world import World
 
 AXES = (Vec2(1.0, 0.0), Vec2(0.0, 1.0))
@@ -8,11 +9,25 @@ def _cross(a: Vec2, b: Vec2) -> float:
     return a.x * b.y - a.y * b.x
 
 
+def apply_force_at_point(body: Body, world_point: Vec2, force: Vec2, dt: float):
+    """Applies an external linear force to `body` at `world_point`, e.g. for a
+    UI-driven interaction (a mouse-drag spring) rather than something internal to
+    step()'s own substep loop. Deposits both the linear kick (force * inv_mass) and
+    the torque from the point being offset from the body's center, the same way
+    gravity/motor torque land on bodies elsewhere in this module."""
+    if body.inv_mass == 0.0:
+        return
+    body.vel = body.vel + force * (body.inv_mass * dt)
+    r = world_point - body.pos
+    torque = r.x * force.y - r.y * force.x
+    body.ang_vel += torque * body.inv_inertia * dt
+
+
 def _apply_motor_torques(world: World):
     """Active control: a PD controller drives each motorized joint toward its target angle."""
     dt = world.dt
     for joint in world.joints:
-        if not joint.motor_enabled:
+        if not joint.enabled or not joint.motor_enabled:
             continue
         a = world.bodies[joint.body_a]
         b = world.bodies[joint.body_b]
@@ -82,6 +97,8 @@ def _solve_angle_limit(joint, a, b):
 
 def _solve_joints(world: World):
     for joint in world.joints:
+        if not joint.enabled:
+            continue
         a = world.bodies[joint.body_a]
         b = world.bodies[joint.body_b]
         ra = joint.local_anchor_a.rotated(a.angle)

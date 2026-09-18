@@ -44,7 +44,13 @@ def load_stick_figure(world: World, config_path: str = "config.json") -> dict[st
 
         joint = Joint(ids[spec["body_a"]], ids[spec["body_b"]], anchor_a, anchor_b, min_angle, max_angle)
         _apply_motor(joint, spec["motor"])
-        world.add_joint(joint)
+        joint_index = world.add_joint(joint)
+
+        # tag the hip joints by name (as skeleton.build_stick_figure does) so features
+        # that act on "the hips" specifically (a balance controller, the renderer's
+        # drag spring) can find them without hardcoding anchor geometry themselves.
+        if spec["body_a"] == "torso" and spec["body_b"].startswith("thigh_"):
+            ids[f"joint_hip_{spec['body_b'].rsplit('_', 1)[-1]}"] = joint_index
 
     for spec in config["pins"]:
         anchor = Vec2(spec["anchor"][0], spec["anchor"][1])

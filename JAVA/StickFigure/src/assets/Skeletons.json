@@ -1,0 +1,270 @@
+{
+    "Body": {
+        "Name": "Stan",
+        
+		"Bones": [
+            {
+                "Name": "torso",
+                "Length": 0.6,
+                "Angle": 90,
+                "Mass": 8
+            },
+            {
+                "Name": "upperArmL",
+                "Length": 0.3,
+                "Angle": 210,
+                "Mass": 1.5
+            },
+            {
+                "Name": "foreArmL",
+                "Length": 0.3,
+                "Angle": 225,
+                "Mass": 1.0
+            },
+            {
+                "Name": "upperArmR",
+                "Length": 0.3,
+                "Angle": -30,
+                "Mass": 1.5
+            },
+            {
+                "Name": "foreArmR",
+                "Length": 0.3,
+                "Angle": -45,
+                "Mass": 1.0
+            },
+            {
+                "Name": "thighL",
+                "Length": 0.4,
+                "Angle": 225,
+                "Mass": 3
+            },
+            {
+                "Name": "shinL",
+                "Length": 0.4,
+                "Angle": -90,
+                "Mass": 2
+            },
+            {
+                "Name": "thighR",
+                "Length": 0.4,
+                "Angle": -45,
+                "Mass": 3
+            },
+            {
+                "Name": "shinR",
+                "Length": 0.4,
+                "Angle": -90,
+                "Mass": 2
+            },
+            {
+                "Name": "head",
+                "Length": 0.2,
+                "Angle": 90,
+                "Mass": 2,
+                "Type": "head"
+            }
+        ],
+		
+		"Attachables": [
+			{
+				"name":"shoulderL",
+				"Type":"joint",
+				"Bone0":"torso",
+				"TipIdx0":1,
+				"Bone1":"upperArmL",
+				"TipIdx1":0
+			},
+			{
+				"name":"shoulderR",
+				"Type":"joint",
+				"Bone0":"torso",
+				"TipIdx0":1,
+				"Bone1":"upperArmR",
+				"TipIdx1":0
+			},
+			{
+				"name":"elbowL",
+				"Type":"joint",
+				"Bone0":"upperArmL",
+				"TipIdx0":1,
+				"Bone1":"foreArmL",
+				"TipIdx1":0
+			},
+			{
+				"name":"elbowR",
+				"Type":"joint",
+				"Bone0":"upperArmR",
+				"TipIdx0":1,
+				"Bone1":"foreArmR",
+				"TipIdx1":0
+			},
+			{
+				"name":"hipL",
+				"Type":"joint",
+				"Bone0":"torso",
+				"TipIdx0":0,
+				"Bone1":"thighL",
+				"TipIdx1":0
+			},
+			{
+				"name":"kneeL",
+				"Type":"joint",
+				"Bone0":"thighL",
+				"TipIdx0":1,
+				"Bone1":"shinL",
+				"TipIdx1":0
+			},
+			{
+				"name":"hipR",
+				"Type":"joint",
+				"Bone0":"torso",
+				"TipIdx0":0,
+				"Bone1":"thighR",
+				"TipIdx1":0
+			},
+			{
+				"name":"kneeR",
+				"Type":"joint",
+				"Bone0":"thighR",
+				"TipIdx0":1,
+				"Bone1":"shinR",
+				"TipIdx1":0
+			},
+			{
+				"name":"neck",
+				"Type":"joint",
+				"Bone0":"torso",
+				"TipIdx0":1,
+				"Bone1":"head",
+				"TipIdx1":0
+			},
+			
+			
+			{
+				"name":"shoulderL",
+				"Type":"motor",
+				"Joint":"shoulderL",
+				"TargetAngle":-60,
+				"Stiffness":20,
+				"Damping":4,
+				"MaxTorque":15,
+				"Enabled":true
+			},
+			{
+				"name":"shoulderR",
+				"Type":"motor",
+				"Joint":"shoulderR",
+				"TargetAngle":60,
+				"Stiffness":20,
+				"Damping":4,
+				"MaxTorque":15,
+				"Enabled":true
+			},
+			{
+				"name":"elbowL",
+				"Type":"motor",
+				"Joint":"elbowL",
+				"TargetAngle":-160,
+				"Stiffness":20,
+				"Damping":4,
+				"MaxTorque":15,
+				"Enabled":true
+			},
+			{
+				"name":"elbowR",
+				"Type":"motor",
+				"Joint":"elbowR",
+				"TargetAngle":160,
+				"Stiffness":20,
+				"Damping":4,
+				"MaxTorque":15,
+				"Enabled":true
+			},
+			{
+				"name":"hipL",
+				"Type":"motor",
+				"Joint":"hipL",
+				"TargetAngle":135,
+				"Stiffness":300,
+				"Damping":60,
+				"MaxTorque":150,
+				"Enabled":true
+			},
+			{
+				"name":"hipR",
+				"Type":"motor",
+				"Joint":"hipR",
+				"TargetAngle":-135,
+				"Stiffness":300,
+				"Damping":60,
+				"MaxTorque":150,
+				"Enabled":true
+			},
+			{
+				"name":"kneeL",
+				"Type":"motor",
+				"Joint":"kneeL",
+				"TargetAngle":-170,
+				"Stiffness":300,
+				"Damping":40,
+				"MaxTorque":155,
+				"Enabled":true
+			},
+			{
+				"name":"kneeR",
+				"Type":"motor",
+				"Joint":"kneeR",
+				"TargetAngle":170,
+				"Stiffness":300,
+				"Damping":40,
+				"MaxTorque":155,
+				"Enabled":true
+			},
+			{
+				"name":"neck",
+				"Type":"motor",
+				"Joint":"neck",
+				"TargetAngle":180,
+				"Stiffness":20,
+				"Damping":4,
+				"MaxTorque":25,
+				"Enabled":true
+			},
+			{
+				"name":"footL",
+				"Type":"frictionPad",
+				"Bone":"shinL",
+				"TipIdx":1,
+				"FrictionCoefficient":0.8
+			},
+			{
+				"name":"footR",
+				"Type":"frictionPad",
+				"Bone":"shinR",
+				"TipIdx":1,
+				"FrictionCoefficient":0.8
+			},
+			{
+				"name":"handL",
+				"Type":"frictionPad",
+				"Bone":"foreArmL",
+				"TipIdx":1,
+				"FrictionCoefficient":0.8
+			},
+			{
+				"name":"handR",
+				"Type":"frictionPad",
+				"Bone":"foreArmR",
+				"TipIdx":1,
+				"FrictionCoefficient":0.8
+			}
+		],
+		
+		"PhysicalUpgrades":[
+			"HipBalancer",
+			"HandJitter",
+			"ShoulderJitter"
+		]
+    }
+}
