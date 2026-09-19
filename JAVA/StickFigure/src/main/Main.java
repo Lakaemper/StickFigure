@@ -4,10 +4,12 @@
  */
 package main;
 
+import animation.PoseMorpher;
+import animation.World;
 import java.io.File;
 import java.io.IOException;
-import physics.World;
 import skeleton.Body;
+import skeleton.Bone;
 import skeleton.Tip;
 import skeleton.attachables.Anchor;
 import utils.TupleD;
@@ -37,8 +39,18 @@ public class Main {
         resetBody(body);
 
         World world = new World(body);
+        PoseMorpher poseMorpher = new PoseMorpher();
         viewer.onStep = () -> {
-            world.step();
+            if (poseMorpher.isActive()) {
+                poseMorpher.morphStep(body);
+                if (!poseMorpher.isActive()) {
+                    // this tick just reached the target pose -- stop rather
+                    // than falling straight through into physics next tick.
+                    viewer.stopPlaying();
+                }
+            } else {
+                world.step();
+            }
             viewer.clear();
             body.draw();
         };
@@ -86,8 +98,8 @@ public class Main {
             }
         };
 
-        // StorePose/LoadPose: raw tip-position snapshots, independent of the
-        // JSON skeleton config -- see Body.storePose/loadPose.
+        // StorePose/LoadPose: full skeleton-config snapshots (Bones/Attachables/
+        // PhysicalUpgrades, same schema as Skeletons.json) -- see Body.storePose/loadPose.
         viewer.onStorePose = file -> {
             try {
                 body.storePose(file);
@@ -105,6 +117,44 @@ public class Main {
             viewer.clear();
             body.draw();
         };
+
+        // Load Target: parses a pose file into a separate, static reference
+        // Body -- never stepped, just read by Morph for its angles/targets.
+        Body[] targetPose = new Body[1];
+        viewer.onLoadTarget = file -> {
+            Body t = new Body();
+            try {
+                t.loadPose(file);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            targetPose[0] = t;
+        };
+
+        // Morph: arms the morpher toward the loaded target, keeping the
+        // fixpoint exactly where it currently is (reposturing in place, not
+        // relocating). onStep (above) then drives it forward each tick while
+        // active. Fixpoint is shinL/tip1 (footL) for now -- looked up by name
+        // each time rather than cached, since Reset/LoadPose rebuild
+        // body.bone[] with fresh objects.
+        viewer.onMorph = () -> {
+            if (targetPose[0] != null) {
+                Bone fixpointBone = findBoneByName(body, "shinL");
+                int fixpointTipIdx = 1;
+                poseMorpher.setTarget(targetPose[0], viewer.getMorphTimeSeconds(),
+                        fixpointBone.tips[fixpointTipIdx].position, fixpointBone, fixpointTipIdx);
+            }
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    private static Bone findBoneByName(Body body, String name) {
+        for (Bone b : body.bone) {
+            if (b.name.equals(name)) {
+                return b;
+            }
+        }
+        return null;
     }
 
     // rebuilds `body` fresh from the JSON (fresh Tips means velocity/prevPosition

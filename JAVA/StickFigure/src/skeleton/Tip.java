@@ -16,7 +16,7 @@ public class Tip {
     public TupleD position;
     public LinkedList<Attachable> ats = new LinkedList();
 
-    // physics state -- unused until a physics.World actually steps a Body
+    // physics state -- unused until an animation.World actually steps a Body
     public TupleD velocity = new TupleD(0, 0);
     public double invMass = 0.0; // 0 = fixed/immovable
     public TupleD prevPosition;  // scratch: this substep's position before integration

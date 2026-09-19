@@ -32,13 +32,13 @@ public class Body {
     // adjacency: for each bone, the joints attached to either of its tips
     public Map<Bone, List<Joint>> boneGraph = new LinkedHashMap<>();
 
-    // flat registries a physics.World needs to walk each step, built alongside
+    // flat registries an animation.World needs to walk each step, built alongside
     // boneGraph so it doesn't have to re-scan every tip's attachables every frame
     public List<Joint> joints = new ArrayList<>();
     public List<Motor> motors = new ArrayList<>();
     public Map<Tip, FrictionPad> frictionPads = new LinkedHashMap<>();
 
-    // external behaviors (e.g. a HipBalancer) that physics.World runs once per
+    // external behaviors (e.g. a HipBalancer) that animation.World runs once per
     // substep, alongside but separate from the skeleton's own joints/motors
     public List<PhysicalUpgrades> physicalUpgrades = new ArrayList<>();
 
@@ -620,10 +620,18 @@ public class Body {
     // over to the next bone before deriving that bone's other tip from its own
     // length/angle.
     public void recomputeGeometry() {
-        bone[0].recomputeTip(0);
+        recomputeGeometry(bone[0], 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // same walk, but pivoting around an arbitrary tip instead of always
+    // bone[0]/tips[0] -- e.g. so a PoseMorpher can keep a chosen hand or foot
+    // fixed while the rest of the body re-poses around it.
+    public void recomputeGeometry(Bone rootBone, int rootTipIdx) {
+        rootBone.recomputeTip(rootTipIdx);
         Set<Bone> visited = new HashSet<>();
-        visited.add(bone[0]);
-        recomputeGeometry(bone[0], visited);
+        visited.add(rootBone);
+        recomputeGeometry(rootBone, visited);
     }
 
     private void recomputeGeometry(Bone b, Set<Bone> visited) {

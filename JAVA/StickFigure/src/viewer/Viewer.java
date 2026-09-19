@@ -15,20 +15,26 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JSlider;
 import javax.swing.Timer;
 import utils.TupleD;
 
 public class Viewer extends JFrame {
 
-    private static final int SIZE = 800;
+    private static final int DISPLAY_WIDTH = 2000;
+    private static final int DISPLAY_HEIGHT = 1200;
     private static final double SCALE = 200.0; // pixels per unit
 
-    private static final int ORIGIN_X = 400;
+    private static final Dimension BUTTON_SIZE = new Dimension(130, 28); // uniform, independent of label text
+
+    private static final int ORIGIN_X = 1000;
     private static final int ORIGIN_Y = 600;
 
     private static final int STEP_DELAY_MS = 16; // ~60fps while playing
@@ -43,8 +49,8 @@ public class Viewer extends JFrame {
     private final DrawPanel panel = new DrawPanel();
 
     // set by whoever wants Play/Step/Reset to actually do something (e.g. Main
-    // wiring up a physics.World) -- Viewer itself has no idea what a step or a
-    // reset means.
+    // wiring up an animation.World) -- Viewer itself has no idea what a step or
+    // a reset means.
     public Runnable onStep;
     public Runnable onReset;
 
@@ -53,6 +59,13 @@ public class Viewer extends JFrame {
     // to whoever wires this up -- it has no idea what a "pose" is.
     public Consumer<File> onStorePose;
     public Consumer<File> onLoadPose;
+
+    // Morphing section: LoadTarget picks the target pose file the same way
+    // LoadPose does; Morph starts a morph toward it (using getMorphTimeSeconds()
+    // for the duration) -- neither carries the target Body itself, since Viewer
+    // has no idea what a Body is.
+    public Consumer<File> onLoadTarget;
+    public Runnable onMorph;
 
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
@@ -85,6 +98,13 @@ public class Viewer extends JFrame {
         }
     });
 
+    // slider range is 0.15-3.0 seconds, represented as hundredths (15-300)
+    // since JSlider only works in integers.
+    private static final int MORPH_TIME_MIN_HUNDREDTHS = 15;
+    private static final int MORPH_TIME_MAX_HUNDREDTHS = 300;
+    private final JSlider morphTimeSlider =
+            new JSlider(JSlider.HORIZONTAL, MORPH_TIME_MIN_HUNDREDTHS, MORPH_TIME_MAX_HUNDREDTHS, 100);
+
     private static class Circle {
         TupleD center;
         double radius;
@@ -113,7 +133,7 @@ public class Viewer extends JFrame {
 
     public Viewer() {
         super("Stick Figure");
-        panel.setPreferredSize(new Dimension(SIZE, SIZE));
+        panel.setPreferredSize(new Dimension(DISPLAY_WIDTH, DISPLAY_HEIGHT));
         panel.setBackground(Color.WHITE);
         add(panel, BorderLayout.CENTER);
         add(buildControls(), BorderLayout.EAST);
@@ -231,12 +251,46 @@ public class Viewer extends JFrame {
             }
         });
 
+        JLabel morphingLabel = new JLabel("Morphing");
+
+        JButton loadTargetButton = new JButton("Load Target");
+        loadTargetButton.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Load Target");
+            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION && onLoadTarget != null) {
+                onLoadTarget.accept(chooser.getSelectedFile());
+            }
+        });
+
+        JButton morphButton = new JButton("Morph");
+        morphButton.addActionListener(e -> {
+            if (onMorph != null) {
+                onMorph.run();
+            }
+        });
+
+        for (JButton b : new JButton[]{playPauseButton, stepButton, resetButton, storePoseButton,
+                loadPoseButton, loadTargetButton, morphButton}) {
+            b.setPreferredSize(BUTTON_SIZE);
+            b.setMaximumSize(BUTTON_SIZE);
+        }
+
         controls.add(playPauseButton);
         controls.add(stepButton);
         controls.add(resetButton);
         controls.add(storePoseButton);
         controls.add(loadPoseButton);
+        controls.add(Box.createVerticalStrut(12));
+        controls.add(morphingLabel);
+        controls.add(loadTargetButton);
+        controls.add(morphButton);
+        controls.add(morphTimeSlider);
         return controls;
+    }
+
+    // the morph duration currently selected on the slider, in seconds.
+    public double getMorphTimeSeconds() {
+        return morphTimeSlider.getValue() / 100.0;
     }
 
     private void runStep() {
@@ -246,11 +300,17 @@ public class Viewer extends JFrame {
     }
 
     private void runReset() {
-        playing = false;
-        playPauseButton.setText("Play");
+        stopPlaying();
         if (onReset != null) {
             onReset.run();
         }
+    }
+
+    // stops Play (as if Pause were pressed) without touching anything else --
+    // e.g. so whoever wires onStep can end playback once a morph completes.
+    public void stopPlaying() {
+        playing = false;
+        playPauseButton.setText("Play");
     }
 
     public void drawLine(TupleD from, TupleD to) {

@@ -1,4 +1,4 @@
-package physics;
+package animation;
 
 import java.util.Map;
 import skeleton.Body;

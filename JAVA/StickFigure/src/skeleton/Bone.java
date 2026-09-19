@@ -5,7 +5,7 @@ import skeleton.attachables.Attachable;
 import utils.TupleD;
 
 public class Bone {
-    String name = "";
+    public String name = "";
     public Tip[] tips = new Tip[2];
     public double length;
     public double angleDeg;

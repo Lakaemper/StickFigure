@@ -69,7 +69,7 @@ public class Anchor extends Attachable {
             originalInvMass[i] = tip.invMass;
             targetAngleDeg[i] = Math.toDegrees(bones[i].angle());
             tip.invMass = 0.0;
-            tip.addAttachable(this);
+            tip.addAttachable(this);    // anchor attaches itself!
         }
 
         this.internalMotors = angleEnabled ? internalMotors : new Motor[0];
