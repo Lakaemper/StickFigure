@@ -1,5 +1,7 @@
 package animation;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import skeleton.Body;
 import skeleton.Bone;
@@ -21,8 +23,18 @@ public class World {
 
     public Body body;
     public TupleD gravity = new TupleD(0.0, -9.81);
+
+    // static closed-polygon obstacles a FrictionPad tip can rest/slide against,
+    // in addition to the flat floor -- see pinLandedTips's ground-plane check
+    // and the per-obstacle check in substep() below.
+    public List<Polygon> obstacles = new ArrayList<>();
     public double dt = 1.0 / 60.0;
     public int substeps = 8;
+    // how close a tip must rest to a Polygon obstacle's boundary to count as
+    // "landed" for pinLandedTips -- contains() alone misses a tip already
+    // correctly resolved to sit exactly ON the boundary, not inside it.
+    private static final double RESTING_EPSILON = 1e-4;
+
     public int solverIterations = 20; // strong leg motors + firm ground contact need
                                        // more Gauss-Seidel passes to converge per
                                        // substep, or the residual shows up as a large
@@ -39,6 +51,39 @@ public class World {
         double subDt = dt / substeps;
         for (int s = 0; s < substeps; s++) {
             substep(subDt);
+        }
+        pinLandedTips();
+    }
+
+    // -------------------------------------------------------------------------
+    // once a FrictionPad tip has settled onto the ground OR a polygon
+    // obstacle (this step's contact resolution already clamped it to the
+    // surface), pin it there with a weak (position-only, no angle lock)
+    // Anchor, rather than leaving it to keep relying on per-substep friction
+    // alone -- e.g. so a jump's landing sticks instead of the character
+    // continuing to slide or settle indefinitely. A no-op for a tip that's
+    // already anchored (Body.addAnchor's own guard).
+    private void pinLandedTips() {
+        for (Tip tip : body.frictionPads.keySet()) {
+            if (tip.position.second <= 0.0) {
+                tip.position = new TupleD(tip.position.first, 0.0);
+                body.addAnchor(tip.name, false);
+                continue;
+            }
+            for (Polygon obstacle : obstacles) {
+                Polygon.ClosestPoint contact = obstacle.closestBoundaryPoint(tip.position);
+                // contains() alone would miss a tip already correctly resolved
+                // to rest exactly ON the boundary (no longer strictly
+                // "inside" once it's not penetrating) -- so also treat
+                // "already touching the boundary" as landed.
+                boolean touching = obstacle.contains(tip.position)
+                        || contact.point.dist(tip.position) < RESTING_EPSILON;
+                if (touching) {
+                    tip.position = contact.point;
+                    body.addAnchor(tip.name, false);
+                    break;
+                }
+            }
         }
     }
 
@@ -99,7 +144,16 @@ public class World {
                 j.enforceCoincidence();
             }
             for (Map.Entry<Tip, FrictionPad> e : body.frictionPads.entrySet()) {
-                e.getValue().enforceContact(e.getKey());
+                Tip tip = e.getKey();
+                FrictionPad pad = e.getValue();
+                pad.enforceContact(tip);
+                for (Polygon obstacle : obstacles) {
+                    if (obstacle.contains(tip.position)) {
+                        Polygon.ClosestPoint contact = obstacle.closestBoundaryPoint(tip.position);
+                        double penetration = contact.point.sub(tip.position).dot(contact.normal);
+                        pad.enforceContact(tip, contact.point, contact.normal, penetration);
+                    }
+                }
             }
         }
 

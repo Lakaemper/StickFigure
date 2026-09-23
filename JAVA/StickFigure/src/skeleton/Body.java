@@ -38,9 +38,20 @@ public class Body {
     public List<Motor> motors = new ArrayList<>();
     public Map<Tip, FrictionPad> frictionPads = new LinkedHashMap<>();
 
+    // every tip, keyed by its "<BoneName>_<TipName>" name -- built alongside
+    // bone[] so a tip can be looked up directly instead of scanning bone[]/tips[].
+    public Map<String, Tip> tipByName = new HashMap<>();
+
     // external behaviors (e.g. a HipBalancer) that animation.World runs once per
     // substep, alongside but separate from the skeleton's own joints/motors
     public List<PhysicalUpgrades> physicalUpgrades = new ArrayList<>();
+
+    // the raw JSON each entry above was built from -- a PhysicalUpgrades
+    // instance is bound to whichever Body's own Motors it was constructed
+    // against, so a target pose's upgrades (e.g. a different jitter
+    // amplitude) can't just be copied onto another Body's list directly; this
+    // is what applyPhysicalUpgradesFrom replays instead.
+    public List<Map<String, Object>> physicalUpgradesConfig = new ArrayList<>();
 
     // pins added/removed at runtime (e.g. by a mouse click), never part of the
     // JSON -- see toggleAnchor.
@@ -80,6 +91,7 @@ public class Body {
 
         List<Object> bonesJson = (List<Object>) bodyJson.get("Bones");
         Map<String, Bone> boneByName = new HashMap<>();
+        tipByName.clear(); // old entries reference Tips this rebuild is about to discard
         bone = new Bone[bonesJson.size()];
         for (int i = 0; i < bonesJson.size(); i++) {
             Map<String, Object> b = (Map<String, Object>) bonesJson.get(i);
@@ -93,6 +105,14 @@ public class Body {
                     ? new HeadBone(boneName, position, length, angleDeg)
                     : new Bone(boneName, position, length, angleDeg);
             newBone.setMass(mass);
+
+            String tip0Name = b.containsKey("Tip0") ? (String) b.get("Tip0") : "0";
+            String tip1Name = b.containsKey("Tip1") ? (String) b.get("Tip1") : "1";
+            newBone.tips[0].name = boneName + "_" + tip0Name;
+            newBone.tips[1].name = boneName + "_" + tip1Name;
+            tipByName.put(newBone.tips[0].name, newBone.tips[0]);
+            tipByName.put(newBone.tips[1].name, newBone.tips[1]);
+
             bone[i] = newBone;
             boneByName.put(boneName, newBone);
         }
@@ -118,9 +138,11 @@ public class Body {
                 Bone b1 = boneByName.get((String) a.get("Bone1"));
                 int tipIdx1 = ((Number) a.get("TipIdx1")).intValue();
 
-                Joint joint = new Joint(jointName, b0, tipIdx0, b1, tipIdx1);
-                b0.tips[tipIdx0].addAttachable(joint);
-                b1.tips[tipIdx1].addAttachable(joint);
+                Tip t0 = b0.tips[tipIdx0];
+                Tip t1 = b1.tips[tipIdx1];
+                Joint joint = new Joint(jointName, t0, t1);
+                t0.addAttachable(joint);
+                t1.addAttachable(joint);
                 joints.add(joint);
                 jointByName.put(jointName, joint);
             }
@@ -144,8 +166,8 @@ public class Body {
                     motor.enabled = (Boolean) enabledJson;
                 }
 
-                joint.bones[0].tips[joint.tipIdx[0]].addAttachable(motor);
-                joint.bones[1].tips[joint.tipIdx[1]].addAttachable(motor);
+                joint.tips[0].addAttachable(motor);
+                joint.tips[1].addAttachable(motor);
                 motors.add(motor);
             }
 
@@ -168,14 +190,33 @@ public class Body {
         }
 
         List<Object> upgradesJson = (List<Object>) bodyJson.get("PhysicalUpgrades");
+        physicalUpgradesConfig.clear();
         if (upgradesJson != null) {
             for (Object o : upgradesJson) {
-                addPhysicalUpgrade((String) o);
+                Map<String, Object> upgradeJson = (Map<String, Object>) o;
+                physicalUpgradesConfig.add(upgradeJson);
+                addPhysicalUpgrade(upgradeJson);
             }
         }
 
         buildBoneGraph(joints);
         recomputeGeometry();
+
+        // anchors are reconstructed last, once the pose they pin is already
+        // correct -- Anchor's constructor freezes each participant's CURRENT
+        // angle/position, so this only works after recomputeGeometry() has
+        // already put every bone where this config says it belongs.
+        if (attachablesJson != null) {
+            for (Object o : attachablesJson) {
+                Map<String, Object> a = (Map<String, Object>) o;
+                if (!"anchor".equals(a.get("Type"))) {
+                    continue;
+                }
+                String tipName = (String) a.get("Name");
+                boolean angleEnabled = !a.containsKey("AngleEnabled") || (Boolean) a.get("AngleEnabled");
+                addAnchor(tipName, angleEnabled);
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -199,6 +240,8 @@ public class Body {
         for (int i = 0; i < bone.length; i++) {
             Bone b = bone[i];
             sb.append("      {\"Name\": \"").append(b.name).append("\", ")
+              .append("\"Tip0\": \"").append(b.tips[0].name.substring(b.name.length() + 1)).append("\", ")
+              .append("\"Tip1\": \"").append(b.tips[1].name.substring(b.name.length() + 1)).append("\", ")
               .append("\"Length\": ").append(b.length).append(", ")
               .append("\"Angle\": ").append(Math.toDegrees(b.angle())).append(", ")
               .append("\"Mass\": ").append(b.mass);
@@ -212,8 +255,8 @@ public class Body {
         List<String> attachableEntries = new ArrayList<>();
         for (Joint j : joints) {
             attachableEntries.add("      {\"name\": \"" + j.name + "\", \"Type\": \"joint\", "
-                    + "\"Bone0\": \"" + j.bones[0].name + "\", \"TipIdx0\": " + j.tipIdx[0] + ", "
-                    + "\"Bone1\": \"" + j.bones[1].name + "\", \"TipIdx1\": " + j.tipIdx[1] + "}");
+                    + "\"Bone0\": \"" + j.tips[0].bone.name + "\", \"TipIdx0\": " + j.tips[0].tipIdx + ", "
+                    + "\"Bone1\": \"" + j.tips[1].bone.name + "\", \"TipIdx1\": " + j.tips[1].tipIdx + "}");
         }
         for (Motor m : motors) {
             double currentTargetDeg = Math.toDegrees(Motor.relativeAngleRad(m.joint));
@@ -223,42 +266,35 @@ public class Body {
                     + "\"MaxTorque\": " + m.maxTorque + ", \"Enabled\": " + m.enabled + "}");
         }
         for (Map.Entry<Tip, FrictionPad> e : frictionPads.entrySet()) {
-            int[] loc = locate(e.getKey());
+            Tip tip = e.getKey();
             FrictionPad pad = e.getValue();
             attachableEntries.add("      {\"name\": \"" + pad.name + "\", \"Type\": \"frictionPad\", "
-                    + "\"Bone\": \"" + bone[loc[0]].name + "\", \"TipIdx\": " + loc[1] + ", "
+                    + "\"Bone\": \"" + tip.bone.name + "\", \"TipIdx\": " + tip.tipIdx + ", "
                     + "\"FrictionCoefficient\": " + pad.frictionCoefficient + "}");
+        }
+        // one entry per Anchor, naming any single one of its participant tips --
+        // addAnchor rediscovers the whole group (all bones meeting at that
+        // point) from just that one name on load, so only one is needed.
+        for (Anchor a : anchors) {
+            attachableEntries.add("      {\"Name\": \"" + a.tipsSnapshot()[0].name + "\", \"Type\": \"anchor\", "
+                    + "\"AngleEnabled\": " + a.angleEnabled + "}");
         }
         sb.append("    \"Attachables\": [\n").append(String.join(",\n", attachableEntries)).append("\n    ],\n");
 
-        List<String> upgradeNames = new ArrayList<>();
+        List<String> upgradeEntries = new ArrayList<>();
         for (PhysicalUpgrades u : physicalUpgrades) {
             if (u instanceof HipBalancer) {
-                upgradeNames.add("\"HipBalancer\"");
+                upgradeEntries.add("{\"Type\": \"HipBalancer\"}");
             } else if (u instanceof HandJitter) {
-                upgradeNames.add("\"HandJitter\"");
+                upgradeEntries.add("{\"Type\": \"HandJitter\", \"AmplitudeDeg\": " + ((HandJitter) u).amplitudeDeg + "}");
             } else if (u instanceof ShoulderJitter) {
-                upgradeNames.add("\"ShoulderJitter\"");
+                upgradeEntries.add("{\"Type\": \"ShoulderJitter\", \"AmplitudeDeg\": " + ((ShoulderJitter) u).amplitudeDeg + "}");
             }
         }
-        sb.append("    \"PhysicalUpgrades\": [").append(String.join(", ", upgradeNames)).append("]\n");
+        sb.append("    \"PhysicalUpgrades\": [").append(String.join(", ", upgradeEntries)).append("]\n");
 
         sb.append("  }\n}\n");
         Files.writeString(file.toPath(), sb.toString());
-    }
-
-    // -------------------------------------------------------------------------
-    // which (boneIndex, tipIdx) owns `tip` -- e.g. for writing a frictionPad's
-    // Bone/TipIdx back out from just the Tip key frictionPads is keyed by.
-    private int[] locate(Tip tip) {
-        for (int i = 0; i < bone.length; i++) {
-            for (int t = 0; t < bone[i].tips.length; t++) {
-                if (bone[i].tips[t] == tip) {
-                    return new int[]{i, t};
-                }
-            }
-        }
-        throw new IllegalStateException("tip not found on any bone");
     }
 
     // -------------------------------------------------------------------------
@@ -269,13 +305,32 @@ public class Body {
     }
 
     // -------------------------------------------------------------------------
-    // recognizes upgrade type names from the "PhysicalUpgrades" JSON list and
+    // rebuilds this Body's PhysicalUpgrades from another Body's own stored
+    // config (e.g. a just-completed morph's target pose) -- reconstructs
+    // fresh instances bound to THIS body's own motors/bones, never the
+    // other's, since a target pose loaded for morphing is a separate,
+    // never-stepped Body whose own Motor objects aren't the ones actually
+    // being simulated. E.g. so morphing into a pose with a different jitter
+    // amplitude actually takes effect, not just that pose's anchors/geometry.
+    public void applyPhysicalUpgradesFrom(Body other) {
+        physicalUpgrades.clear();
+        physicalUpgradesConfig.clear();
+        for (Map<String, Object> upgradeJson : other.physicalUpgradesConfig) {
+            physicalUpgradesConfig.add(upgradeJson);
+            addPhysicalUpgrade(upgradeJson);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // recognizes upgrade types from the "PhysicalUpgrades" JSON list and
     // constructs them, deriving whatever they need (torso, specific motors)
     // from what buildFromConfig has already built -- the JSON only ever names
-    // the type, since e.g. a HipBalancer's wiring (which bones/motors) is
+    // the type plus its own tunable parameters (e.g. HandJitter/ShoulderJitter's
+    // AmplitudeDeg), since e.g. a HipBalancer's wiring (which bones/motors) is
     // implied by this skeleton's own structure, not separate data to author.
-    private void addPhysicalUpgrade(String upgradeName) {
-        if ("HipBalancer".equals(upgradeName)) {
+    private void addPhysicalUpgrade(Map<String, Object> upgradeJson) {
+        String type = (String) upgradeJson.get("Type");
+        if ("HipBalancer".equals(type)) {
             Motor hipL = null;
             Motor hipR = null;
             for (Motor m : motors) {
@@ -286,7 +341,7 @@ public class Body {
                 }
             }
             physicalUpgrades.add(new HipBalancer(bone[0], new Motor[]{hipL, hipR}, bone[0].angleDeg));
-        } else if ("HandJitter".equals(upgradeName)) {
+        } else if ("HandJitter".equals(type)) {
             Motor elbowL = null;
             Motor elbowR = null;
             for (Motor m : motors) {
@@ -296,8 +351,9 @@ public class Body {
                     elbowR = m;
                 }
             }
-            physicalUpgrades.add(new HandJitter(new Motor[]{elbowL, elbowR}));
-        } else if ("ShoulderJitter".equals(upgradeName)) {
+            double amplitudeDeg = ((Number) upgradeJson.get("AmplitudeDeg")).doubleValue();
+            physicalUpgrades.add(new HandJitter(new Motor[]{elbowL, elbowR}, amplitudeDeg));
+        } else if ("ShoulderJitter".equals(type)) {
             Motor shoulderL = null;
             Motor shoulderR = null;
             for (Motor m : motors) {
@@ -307,7 +363,8 @@ public class Body {
                     shoulderR = m;
                 }
             }
-            physicalUpgrades.add(new ShoulderJitter(new Motor[]{shoulderL, shoulderR}));
+            double amplitudeDeg = ((Number) upgradeJson.get("AmplitudeDeg")).doubleValue();
+            physicalUpgrades.add(new ShoulderJitter(new Motor[]{shoulderL, shoulderR}, amplitudeDeg));
         }
     }
 
@@ -332,16 +389,14 @@ public class Body {
     }
 
     // -------------------------------------------------------------------------
-    // every (bone, tipIdx) coincident with the given seed, discovered by
-    // walking Joints outward from it -- a leaf seed yields just itself; a
-    // branching point like the hip pulls in every bone jointed there, directly
-    // or transitively. Also collects every Joint found to be INTERNAL to the
+    // every tip coincident with the given seed, discovered by walking Joints
+    // outward from it -- a leaf seed yields just itself; a branching point
+    // like the hip pulls in every bone jointed there, directly or
+    // transitively. Also collects every Joint found to be INTERNAL to the
     // group (both its endpoints ended up in it), so Anchor can disable their
     // Motors for its lifetime.
-    private void collectAnchorGroup(Bone seedBone, int seedTipIdx,
-            List<Bone> groupBones, List<Integer> groupTipIdx, List<Joint> internalJoints) {
-        groupBones.add(seedBone);
-        groupTipIdx.add(seedTipIdx);
+    private void collectAnchorGroup(Tip seedTip, List<Tip> groupTips, List<Joint> internalJoints) {
+        groupTips.add(seedTip);
 
         boolean added = true;
         while (added) {
@@ -350,33 +405,21 @@ public class Body {
                 if (internalJoints.contains(j)) {
                     continue;
                 }
-                int idx0 = groupIndexOf(groupBones, groupTipIdx, j.bones[0], j.tipIdx[0]);
-                int idx1 = groupIndexOf(groupBones, groupTipIdx, j.bones[1], j.tipIdx[1]);
-                if (idx0 >= 0 && idx1 >= 0) {
+                boolean has0 = groupTips.contains(j.tips[0]);
+                boolean has1 = groupTips.contains(j.tips[1]);
+                if (has0 && has1) {
                     internalJoints.add(j);
-                } else if (idx0 >= 0) {
-                    groupBones.add(j.bones[1]);
-                    groupTipIdx.add(j.tipIdx[1]);
+                } else if (has0) {
+                    groupTips.add(j.tips[1]);
                     internalJoints.add(j);
                     added = true;
-                } else if (idx1 >= 0) {
-                    groupBones.add(j.bones[0]);
-                    groupTipIdx.add(j.tipIdx[0]);
+                } else if (has1) {
+                    groupTips.add(j.tips[0]);
                     internalJoints.add(j);
                     added = true;
                 }
             }
         }
-    }
-
-    // -------------------------------------------------------------------------
-    private static int groupIndexOf(List<Bone> groupBones, List<Integer> groupTipIdx, Bone b, int tipIdx) {
-        for (int i = 0; i < groupBones.size(); i++) {
-            if (groupBones.get(i) == b && groupTipIdx.get(i) == tipIdx) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     // -------------------------------------------------------------------------
@@ -493,10 +536,10 @@ public class Body {
             }
         }
         for (Joint j : joints) {
-            if (j.bones[0].tips[j.tipIdx[0]] == tip) {
-                edges.add(new Edge(j.bones[1].tips[j.tipIdx[1]], 0.0));
-            } else if (j.bones[1].tips[j.tipIdx[1]] == tip) {
-                edges.add(new Edge(j.bones[0].tips[j.tipIdx[0]], 0.0));
+            if (j.tips[0] == tip) {
+                edges.add(new Edge(j.tips[1], 0.0));
+            } else if (j.tips[1] == tip) {
+                edges.add(new Edge(j.tips[0], 0.0));
             }
         }
         return edges;
@@ -515,68 +558,39 @@ public class Body {
     // -------------------------------------------------------------------------
     // the nearest unanchored tip within radius -- or null. Any tip is a valid
     // seed; toggleAnchor resolves the rest of its group (if any) from there.
-    private TipLocation closestUnanchoredTip(TupleD point, double radius) {
-        Bone closestBone = null;
-        int closestTipIdx = -1;
+    private Tip closestUnanchoredTip(TupleD point, double radius) {
+        Tip closest = null;
         double closestDistSq = radius * radius;
-        for (Bone b : bone) {
-            for (int i = 0; i < b.tips.length; i++) {
-                if (isTipAnchored(b.tips[i])) {
-                    continue;
-                }
-                double dx = b.tips[i].position.first - point.first;
-                double dy = b.tips[i].position.second - point.second;
-                double distSq = dx * dx + dy * dy;
-                if (distSq < closestDistSq) {
-                    closestDistSq = distSq;
-                    closestBone = b;
-                    closestTipIdx = i;
-                }
+        for (Tip tip : tipByName.values()) {
+            if (isTipAnchored(tip)) {
+                continue;
+            }
+            double dx = tip.position.first - point.first;
+            double dy = tip.position.second - point.second;
+            double distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
+                closest = tip;
             }
         }
-        return closestBone == null ? null : new TipLocation(closestBone, closestTipIdx);
-    }
-
-    private static class TipLocation {
-        final Bone bone;
-        final int tipIdx;
-
-        TipLocation(Bone bone, int tipIdx) {
-            this.bone = bone;
-            this.tipIdx = tipIdx;
-        }
+        return closest;
     }
 
     // -------------------------------------------------------------------------
-    // click handling for Anchor: a click near an EXISTING anchor removes it
-    // (toggle off) -- checked first, so clicking an already-pinned point never
-    // just re-pins it. Otherwise, a click near an unanchored tip pins the
-    // whole group of bones meeting at that point: just the one bone for a
-    // leaf, every bone jointed there for a branching point like the hip. A
-    // no-op if neither is within ANCHOR_CLICK_RADIUS. shiftHeld creates the
-    // anchor with angleEnabled=false -- position-only, no angle lock.
-    public void toggleAnchor(TupleD point, boolean shiftHeld) {
-        Anchor existing = closestAnchor(point, ANCHOR_CLICK_RADIUS);
-        if (existing != null) {
-            existing.release();
-            anchors.remove(existing);
+    // programmatic equivalent of a GUI click that pins a tip: pins the whole
+    // group of bones meeting at the named tip (just that one bone for a leaf,
+    // every bone jointed there for a branching point like the hip). A no-op
+    // if the name doesn't resolve to a tip, or that tip is already anchored.
+    public void addAnchor(String tipName, boolean angleEnabled) {
+        Tip seedTip = tipByName.get(tipName);
+        if (seedTip == null || isTipAnchored(seedTip)) {
             return;
         }
 
-        TipLocation loc = closestUnanchoredTip(point, ANCHOR_CLICK_RADIUS);
-        if (loc == null) {
-            return;
-        }
-
-        List<Bone> groupBones = new ArrayList<>();
-        List<Integer> groupTipIdx = new ArrayList<>();
+        List<Tip> groupTips = new ArrayList<>();
         List<Joint> internalJoints = new ArrayList<>();
-        collectAnchorGroup(loc.bone, loc.tipIdx, groupBones, groupTipIdx, internalJoints);
+        collectAnchorGroup(seedTip, groupTips, internalJoints);
 
-        int[] tipIdxArray = new int[groupTipIdx.size()];
-        for (int i = 0; i < tipIdxArray.length; i++) {
-            tipIdxArray[i] = groupTipIdx.get(i);
-        }
         List<Motor> internalMotors = new ArrayList<>();
         for (Joint j : internalJoints) {
             Motor m = findMotorForJoint(j);
@@ -586,9 +600,102 @@ public class Body {
         }
 
         Anchor anchor = new Anchor("anchor" + (anchorCounter++),
-                groupBones.toArray(new Bone[0]), tipIdxArray, internalMotors.toArray(new Motor[0]),
-                ANCHOR_STIFFNESS, ANCHOR_DAMPING, ANCHOR_MAX_TORQUE, !shiftHeld);
+                groupTips.toArray(new Tip[0]), internalMotors.toArray(new Motor[0]),
+                ANCHOR_STIFFNESS, ANCHOR_DAMPING, ANCHOR_MAX_TORQUE, angleEnabled);
         anchors.add(anchor);
+    }
+
+    // -------------------------------------------------------------------------
+    // programmatic equivalent of a GUI click that un-pins an anchor: releases
+    // whichever anchor covers the named tip. A no-op if the name doesn't
+    // resolve to a tip, or nothing currently anchors it.
+    public void removeAnchor(String tipName) {
+        Tip tip = tipByName.get(tipName);
+        if (tip == null) {
+            return;
+        }
+        Anchor found = findAnchorCovering(tip);
+        if (found != null) {
+            found.release();
+            anchors.remove(found);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // releases the named anchor's POSITION lock (its angle lock, if any,
+    // keeps running -- it stays in `anchors` so apply() still holds this
+    // bone's orientation via real torque every substep) and gives every
+    // participant tip the same one-time velocity kick, so the whole group
+    // flies off together as a single rigid unit -- e.g. launching a
+    // flying-pose hip anchor into a gravity-driven parabola while it keeps
+    // holding that pose in the air. A no-op if the name doesn't resolve to an
+    // anchored tip.
+    public void launchAnchor(String tipName, TupleD velocityKick) {
+        Tip tip = tipByName.get(tipName);
+        if (tip == null) {
+            return;
+        }
+        Anchor found = findAnchorCovering(tip);
+        if (found != null) {
+            found.releasePosition();
+            found.kick(velocityKick);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // disables every active anchor (position lock AND angle lock both go
+    // away, unlike launchAnchor's single-anchor releasePosition) and gives
+    // every tip in the body the same one-time velocity kick. Gravity is
+    // mass-independent (World.substep) and every tip now shares the same
+    // velocity, so absent any other force the whole body would free-fall as
+    // a perfectly rigid unit. Motors are deliberately left enabled, though:
+    // a Motor realizes its torque as reaction forces at BOTH ends of its
+    // joint (see Motor.apply), so an active one (e.g. HandJitter's cosmetic
+    // idle-sway) reacts back into the rest of the body and visibly rotates
+    // it during flight -- confirmed to look fine (a gradual settling drift,
+    // not a tumble) once HipBalancer, whose strong hip motors fight a
+    // "falling over" reading that doesn't apply mid-air, was removed from
+    // the poses that use this. E.g. for a "kick" step right after morphing
+    // into a held flying pose.
+    public void launch(TupleD velocityKick) {
+        for (Anchor a : new ArrayList<>(anchors)) {
+            a.release();
+            anchors.remove(a);
+        }
+        for (Tip tip : tipByName.values()) {
+            tip.velocity = tip.velocity.add(velocityKick);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    private Anchor findAnchorCovering(Tip tip) {
+        for (Anchor a : anchors) {
+            if (a.covers(tip)) {
+                return a;
+            }
+        }
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // click handling for Anchor: a click near an EXISTING anchor removes it
+    // (toggle off) -- checked first, so clicking an already-pinned point never
+    // just re-pins it. Otherwise, a click near an unanchored tip pins it via
+    // addAnchor. A no-op if neither is within ANCHOR_CLICK_RADIUS. shiftHeld
+    // creates the anchor with angleEnabled=false -- position-only, no angle lock.
+    public void toggleAnchor(TupleD point, boolean shiftHeld) {
+        Anchor existing = closestAnchor(point, ANCHOR_CLICK_RADIUS);
+        if (existing != null) {
+            removeAnchor(existing.tipsSnapshot()[0].name);
+            return;
+        }
+
+        Tip seedTip = closestUnanchoredTip(point, ANCHOR_CLICK_RADIUS);
+        if (seedTip == null) {
+            return;
+        }
+
+        addAnchor(seedTip.name, !shiftHeld);
     }
 
     // -------------------------------------------------------------------------
@@ -609,8 +716,8 @@ public class Body {
             boneGraph.put(b, new ArrayList<>());
         }
         for (Joint j : joints) {
-            boneGraph.get(j.bones[0]).add(j);
-            boneGraph.get(j.bones[1]).add(j);
+            boneGraph.get(j.tips[0].bone).add(j);
+            boneGraph.get(j.tips[1].bone).add(j);
         }
     }
 
@@ -620,51 +727,76 @@ public class Body {
     // over to the next bone before deriving that bone's other tip from its own
     // length/angle.
     public void recomputeGeometry() {
-        recomputeGeometry(bone[0], 0);
+        recomputeGeometry(bone[0].tips[0]);
     }
 
     // -------------------------------------------------------------------------
     // same walk, but pivoting around an arbitrary tip instead of always
     // bone[0]/tips[0] -- e.g. so a PoseMorpher can keep a chosen hand or foot
     // fixed while the rest of the body re-poses around it.
-    public void recomputeGeometry(Bone rootBone, int rootTipIdx) {
-        rootBone.recomputeTip(rootTipIdx);
+    public void recomputeGeometry(Tip rootTip) {
+        rootTip.bone.recomputeTip(rootTip.tipIdx);
         Set<Bone> visited = new HashSet<>();
-        visited.add(rootBone);
-        recomputeGeometry(rootBone, visited);
+        visited.add(rootTip.bone);
+        recomputeGeometry(rootTip.bone, visited, true);
     }
 
-    private void recomputeGeometry(Bone b, Set<Bone> visited) {
+    // -------------------------------------------------------------------------
+    // same walk as recomputeGeometry(Tip), but never derives a bone's angle
+    // from its joint's motor -- it only carries tip POSITIONS outward via
+    // joint coincidence, leaving every bone's angleDeg exactly as the caller
+    // already set it. For a caller (PoseMorpher) that independently
+    // interpolates each bone's own absolute angle directly: chaining
+    // recomputeGeometry's motor-derived relative angles through several
+    // joints can compose into a near-360-degree sweep for a bone far from
+    // the root even when every individual relative-angle lerp was itself
+    // under 180 degrees, since "each term shortest" doesn't imply "sum
+    // shortest". Position propagation has no such issue -- a position is a
+    // point, not an angle, so there's no "long way around" to take.
+    public void propagatePositions(Tip rootTip) {
+        rootTip.bone.recomputeTip(rootTip.tipIdx);
+        Set<Bone> visited = new HashSet<>();
+        visited.add(rootTip.bone);
+        recomputeGeometry(rootTip.bone, visited, false);
+    }
+
+    private void recomputeGeometry(Bone b, Set<Bone> visited, boolean deriveAngleFromMotor) {
         for (Joint j : boneGraph.get(b)) {
-            int selfIdx = (j.bones[0] == b) ? 0 : 1;
+            int selfIdx = (j.tips[0].bone == b) ? 0 : 1;
             int otherIdx = 1 - selfIdx;
-            Bone other = j.bones[otherIdx];
+            Tip otherTipObj = j.tips[otherIdx];
+            Bone other = otherTipObj.bone;
             if (visited.contains(other)) {
                 continue;
             }
 
-            int selfTip = j.tipIdx[selfIdx];
-            int otherTip = j.tipIdx[otherIdx];
+            int selfTip = j.tips[selfIdx].tipIdx;
+            int otherTip = otherTipObj.tipIdx;
 
             // if this joint has a motor, `other`'s angle is DERIVED from the
             // motor's own target (using the same joint-outward convention
             // Motor.apply() uses) rather than kept as its own independently
             // authored "Angle" -- so the built pose always starts at exactly
             // zero motor error, instead of the two numbers silently drifting
-            // out of sync as target angles get tuned separately from bone angles.
-            Motor motor = findMotorForJoint(j);
-            if (motor != null) {
-                double selfOutwardDeg = (selfTip == 0) ? b.angleDeg : b.angleDeg + 180.0;
-                double sign = (selfIdx == 0) ? 1.0 : -1.0;
-                double otherOutwardDeg = selfOutwardDeg + sign * motor.targetAngleDeg;
-                other.angleDeg = (otherTip == 0) ? otherOutwardDeg : otherOutwardDeg - 180.0;
+            // out of sync as target angles get tuned separately from bone
+            // angles. Skipped when deriveAngleFromMotor is false -- the
+            // caller has already set `other.angleDeg` itself and this walk
+            // should only carry position (see propagatePositions).
+            if (deriveAngleFromMotor) {
+                Motor motor = findMotorForJoint(j);
+                if (motor != null) {
+                    double selfOutwardDeg = (selfTip == 0) ? b.angleDeg : b.angleDeg + 180.0;
+                    double sign = (selfIdx == 0) ? 1.0 : -1.0;
+                    double otherOutwardDeg = selfOutwardDeg + sign * motor.targetAngleDeg;
+                    other.angleDeg = (otherTip == 0) ? otherOutwardDeg : otherOutwardDeg - 180.0;
+                }
             }
 
             other.tips[otherTip].position = b.tips[selfTip].position;
             other.recomputeTip(otherTip);
 
             visited.add(other);
-            recomputeGeometry(other, visited);
+            recomputeGeometry(other, visited, deriveAngleFromMotor);
         }
     }
 

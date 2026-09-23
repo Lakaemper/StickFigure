@@ -25,16 +25,31 @@ public class FrictionPad extends Attachable {
         if (tip.invMass == 0.0) {
             return;
         }
-
         double penetration = -tip.position.second;
-        if (penetration <= 0.0) {
+        enforceContact(tip, new TupleD(tip.position.first, 0.0), new TupleD(0.0, 1.0), penetration);
+    }
+
+    // -------------------------------------------------------------------------
+    // same push-back + Coulomb friction as the flat-floor case above,
+    // generalized to an arbitrary contact point and outward unit normal --
+    // e.g. a Polygon obstacle's nearest boundary point/edge normal, rather
+    // than always straight down onto y=0. `penetration` is how far past that
+    // boundary the tip already is, along `normal` (the caller derives it,
+    // since that depends on the shape -- straight subtraction for a flat
+    // floor, a closest-point projection for a polygon).
+    public void enforceContact(Tip tip, TupleD contactPoint, TupleD normal, double penetration) {
+        if (tip.invMass == 0.0 || penetration <= 0.0) {
             return;
         }
 
-        double dx = tip.position.first - tip.prevPosition.first;
-        double frictionLimit = frictionCoefficient * penetration;
-        double allowedDx = Math.abs(dx) <= frictionLimit ? 0.0 : Math.copySign(frictionLimit, dx);
+        TupleD tangent = new TupleD(-normal.second, normal.first);
+        double prevOffAlongNormal = tip.prevPosition.sub(contactPoint).dot(normal);
+        TupleD projectedPrev = tip.prevPosition.sub(normal.times(prevOffAlongNormal));
 
-        tip.position = new TupleD(tip.prevPosition.first + allowedDx, 0.0);
+        double tangentialDelta = tip.position.sub(tip.prevPosition).dot(tangent);
+        double frictionLimit = frictionCoefficient * penetration;
+        double allowed = Math.abs(tangentialDelta) <= frictionLimit ? 0.0 : Math.copySign(frictionLimit, tangentialDelta);
+
+        tip.position = projectedPrev.add(tangent.times(allowed));
     }
 }

@@ -4,14 +4,17 @@ import java.util.HashMap;
 import java.util.Map;
 import skeleton.Body;
 import skeleton.Bone;
+import skeleton.Tip;
 import skeleton.attachables.Motor;
 import utils.TupleD;
 
 // -----------------------------------------------------------------------------
-// Purely kinematic pose-to-pose morph: interpolates a chosen fixpoint bone's
-// own angle/position and every motor's target angle between wherever
-// currentBody currently is and a target pose, then rebuilds the whole
-// skeleton from those interpolated values via recomputeGeometry() each step.
+// Purely kinematic pose-to-pose morph: interpolates the fixpoint tip's own
+// position, and every bone's own absolute angle independently (each takes
+// its own short way around, see morphStep), between wherever currentBody
+// currently is and a target pose, then rebuilds tip positions from those
+// angles via Body.propagatePositions() each step -- each motor's target is
+// then derived from the resulting geometry, not interpolated itself.
 // Deliberately not physics-driven -- while morphing, this replaces
 // World.step() rather than running alongside it, so the skeleton is always
 // exactly rigid and geometrically valid at every intermediate frame, with no
@@ -23,14 +26,12 @@ public class PoseMorpher {
     private Body targetPose;
     private double morphTime;
     private TupleD targetRootPosition;
-    private Bone rootBone;
-    private int rootTipIdx;
+    private Tip rootTip;
 
     private double elapsed;
     private boolean started;
-    private double startRootAngleDeg;
     private TupleD startRootPosition;
-    private Map<String, Double> startMotorTargetDeg;
+    private Map<String, Double> startBoneAngleDeg;
 
     // -------------------------------------------------------------------------
     // true while a morph is in progress -- e.g. so the caller's own step loop
@@ -41,22 +42,21 @@ public class PoseMorpher {
 
     // -------------------------------------------------------------------------
     // begins a new morph toward targetPose's current pose, reaching
-    // targetRootPosition over morphTime seconds. rootBone/rootTipIdx name the
-    // fixpoint everything else re-poses around -- that tip (belonging to
-    // whatever Body morphStep will later be called with) is the one that
-    // actually moves to targetRootPosition; every other bone follows via
-    // Body.recomputeGeometry(rootBone, rootTipIdx) pivoting from there,
-    // exactly like bone[0]/tips[0] already does for the ordinary build. The
-    // actual starting point is captured from rootBone's own current state on
-    // the next morphStep call, not here -- so setTarget can be called before
-    // that pose is settled.
-    public void setTarget(Body targetPose, double morphTime, TupleD targetRootPosition,
-            Bone rootBone, int rootTipIdx) {
+    // targetRootPosition over morphTime seconds. rootTip names the fixpoint
+    // everything else re-poses around -- that tip (belonging to whatever Body
+    // morphStep will later be called with) is the one that actually moves to
+    // targetRootPosition; every other bone's own angle is interpolated
+    // independently (see morphStep) and positions then follow via
+    // Body.propagatePositions(rootTip) pivoting from there, exactly like
+    // bone[0]/tips[0] already does for the ordinary build. The actual
+    // starting point is captured from rootTip's own current state on the next
+    // morphStep call, not here -- so setTarget can be called before that pose
+    // is settled.
+    public void setTarget(Body targetPose, double morphTime, TupleD targetRootPosition, Tip rootTip) {
         this.targetPose = targetPose;
         this.morphTime = morphTime;
         this.targetRootPosition = targetRootPosition;
-        this.rootBone = rootBone;
-        this.rootTipIdx = rootTipIdx;
+        this.rootTip = rootTip;
         this.elapsed = 0.0;
         this.started = false;
     }
@@ -79,21 +79,38 @@ public class PoseMorpher {
         elapsed += STEP_DT;
         double t = morphTime > 0.0 ? Math.min(1.0, elapsed / morphTime) : 1.0;
 
-        Bone targetRootBone = findBoneByName(targetPose, rootBone.name);
-        rootBone.angleDeg = lerpAngleDeg(startRootAngleDeg, targetRootBone.angleDeg, t);
-        rootBone.tips[rootTipIdx].position =
-                startRootPosition.add(targetRootPosition.sub(startRootPosition).times(t));
+        rootTip.position = startRootPosition.add(targetRootPosition.sub(startRootPosition).times(t));
 
-        for (Motor targetMotor : targetPose.motors) {
-            Double startDeg = startMotorTargetDeg.get(targetMotor.name);
-            Motor currentMotor = findMotorByName(currentBody, targetMotor.name);
-            if (startDeg == null || currentMotor == null) {
+        // each bone's own absolute angle is interpolated directly and
+        // independently, so it always takes ITS OWN short way -- rather than
+        // deriving non-root bones from the fixpoint's angle plus a chain of
+        // independently-lerped RELATIVE joint angles. That chained approach
+        // looks right per joint (every individual relative-angle lerp is
+        // itself under 180 degrees) but doesn't compose: for a bone several
+        // joints from the fixpoint (e.g. the leg on the far side from a
+        // foot fixpoint), the sum of several "each individually shortest"
+        // terms can still net out to a near-360-degree sweep.
+        for (Bone b : currentBody.bone) {
+            Double startDeg = startBoneAngleDeg.get(b.name);
+            Bone targetBone = findBoneByName(targetPose, b.name);
+            if (startDeg == null || targetBone == null) {
                 continue;
             }
-            currentMotor.targetAngleDeg = lerpAngleDeg(startDeg, targetMotor.targetAngleDeg, t);
+            b.angleDeg = lerpAngleDeg(startDeg, Math.toDegrees(targetBone.angle()), t);
         }
 
-        currentBody.recomputeGeometry(rootBone, rootTipIdx);
+        // positions only, from the angles just set above -- NOT
+        // recomputeGeometry, which would re-derive non-root bones' angles
+        // from their motor's target and undo the per-bone lerp above.
+        currentBody.propagatePositions(rootTip);
+
+        // each motor's target is derived FROM the geometry just built,
+        // rather than interpolated separately, so physics sees exactly zero
+        // error the instant it resumes -- by construction, every tick, not
+        // just (approximately) at t=1.
+        for (Motor m : currentBody.motors) {
+            m.targetAngleDeg = Math.toDegrees(Motor.relativeAngleRad(m.joint));
+        }
 
         // purely kinematic -- no velocity should carry over into whatever
         // (physics or another morph) runs next.
@@ -105,22 +122,11 @@ public class PoseMorpher {
 
     // -------------------------------------------------------------------------
     private void captureStart(Body currentBody) {
-        startRootAngleDeg = Math.toDegrees(rootBone.angle());
-        startRootPosition = rootBone.tips[rootTipIdx].position;
-        startMotorTargetDeg = new HashMap<>();
-        for (Motor m : currentBody.motors) {
-            startMotorTargetDeg.put(m.name, Math.toDegrees(Motor.relativeAngleRad(m.joint)));
+        startRootPosition = rootTip.position;
+        startBoneAngleDeg = new HashMap<>();
+        for (Bone b : currentBody.bone) {
+            startBoneAngleDeg.put(b.name, Math.toDegrees(b.angle()));
         }
-    }
-
-    // -------------------------------------------------------------------------
-    private static Motor findMotorByName(Body body, String name) {
-        for (Motor m : body.motors) {
-            if (m.name.equals(name)) {
-                return m;
-            }
-        }
-        return null;
     }
 
     // -------------------------------------------------------------------------

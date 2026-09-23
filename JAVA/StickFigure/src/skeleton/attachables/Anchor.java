@@ -19,11 +19,13 @@ import utils.TupleD;
 // release(), since the participants' own absolute-angle locks already fully
 // determine that joint's relative angle -- a live Motor would just fight it.
 //
-// Body is responsible for figuring out which bones/tips belong together (a
-// graph query over its own Joints) and which Motors are internal to that
-// group; this class only ever acts on the resolved lists it's handed.
+// Body is responsible for figuring out which tips belong together (a graph
+// query over its own Joints) and which Motors are internal to that group;
+// this class only ever acts on the resolved list it's handed. Each
+// participant's owning Bone (for .angle()/.angularVelocity()) and far tip are
+// reached via the Tip itself (Tip.bone, Tip.farTip()) rather than being
+// carried alongside as separate parallel arrays.
 public class Anchor extends Attachable {
-    private final Bone[] bones;
     private final Tip[] tips;
     private final Tip[] farTips;
     private final double[] originalInvMass;
@@ -31,6 +33,9 @@ public class Anchor extends Attachable {
 
     private final Motor[] internalMotors;
     private final boolean[] motorWasEnabled;
+
+    // scratch, valid only between freezeFarTips() and unfreezeFarTips().
+    private double[] farOriginalInvMass;
 
     public boolean enabled = true;
 
@@ -44,32 +49,30 @@ public class Anchor extends Attachable {
     public double maxTorque;  // clamp, applied per participant
 
     // -------------------------------------------------------------------------
-    // bones[i]/tipIdxs[i] together name one participant's tip. internalMotors
-    // are the Motors (if any) on joints connecting two participants of this
-    // same group -- disabled for the anchor's lifetime, but only if
-    // angleEnabled (see its own comment for why).
-    public Anchor(String name, Bone[] bones, int[] tipIdxs, Motor[] internalMotors,
+    // tips[i] is one participant. internalMotors are the Motors (if any) on
+    // joints connecting two participants of this same group -- disabled for
+    // the anchor's lifetime, but only if angleEnabled (see its own comment
+    // for why).
+    public Anchor(String name, Tip[] tips, Motor[] internalMotors,
             double stiffness, double damping, double maxTorque, boolean angleEnabled) {
         super("anchor", name);
-        this.bones = bones;
+        this.tips = tips;
         this.stiffness = stiffness;
         this.damping = damping;
         this.maxTorque = maxTorque;
         this.angleEnabled = angleEnabled;
 
-        int n = bones.length;
-        tips = new Tip[n];
+        int n = tips.length;
         farTips = new Tip[n];
         originalInvMass = new double[n];
         targetAngleDeg = new double[n];
         for (int i = 0; i < n; i++) {
-            Tip tip = bones[i].tips[tipIdxs[i]];
-            tips[i] = tip;
-            farTips[i] = bones[i].tips[0] == tip ? bones[i].tips[1] : bones[i].tips[0];
+            Tip tip = tips[i];
+            farTips[i] = tip.farTip();
             originalInvMass[i] = tip.invMass;
-            targetAngleDeg[i] = Math.toDegrees(bones[i].angle());
+            targetAngleDeg[i] = Math.toDegrees(tip.bone.angle());
             tip.invMass = 0.0;
-            tip.addAttachable(this);    // anchor attaches itself!
+            tip.addAttachable(this);
         }
 
         this.internalMotors = angleEnabled ? internalMotors : new Motor[0];
@@ -84,8 +87,8 @@ public class Anchor extends Attachable {
     // undoes the pin: gives every participant tip back its original mass, and
     // re-enables whatever internal motors this anchor disabled.
     public void release() {
+        releasePosition();
         for (int i = 0; i < tips.length; i++) {
-            tips[i].invMass = originalInvMass[i];
             tips[i].ats.remove(this);
         }
         for (int i = 0; i < internalMotors.length; i++) {
@@ -94,12 +97,36 @@ public class Anchor extends Attachable {
     }
 
     // -------------------------------------------------------------------------
+    // undoes just the position pin (every participant tip gets its original
+    // mass back), leaving everything else about this anchor intact: it stays
+    // in Body.anchors, so apply() keeps running each substep and goes on
+    // holding this bone's angle rigid via real torque -- but the tip is now a
+    // genuine, movable point mass again, free to fly under gravity/velocity
+    // rather than being pinned in place. Pair with kick() to launch it.
+    public void releasePosition() {
+        for (int i = 0; i < tips.length; i++) {
+            tips[i].invMass = originalInvMass[i];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // adds the same velocity to every participant tip, so they keep moving
+    // together (still coincident) -- e.g. a one-time launch impulse after
+    // releasePosition(). Only has an effect on tips with nonzero invMass
+    // (releasePosition() first, or this silently does nothing).
+    public void kick(TupleD velocityDelta) {
+        for (Tip tip : tips) {
+            tip.velocity = tip.velocity.add(velocityDelta);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     public void apply(double dt) {
         if (!enabled || !angleEnabled) {
             return;
         }
-        for (int i = 0; i < bones.length; i++) {
-            Bone bone = bones[i];
+        for (int i = 0; i < tips.length; i++) {
+            Bone bone = tips[i].bone;
             double error = normalizeAngle(Math.toRadians(targetAngleDeg[i]) - bone.angle());
             double torque = stiffness * error - damping * bone.angularVelocity();
             torque = Math.max(-maxTorque, Math.min(maxTorque, torque));
@@ -113,8 +140,8 @@ public class Anchor extends Attachable {
     // anchor's originally frozen target, so normal simulation doesn't snap it
     // back the instant forces (this anchor's own, or anything else's) resume.
     public void refreezeAngles() {
-        for (int i = 0; i < bones.length; i++) {
-            targetAngleDeg[i] = Math.toDegrees(bones[i].angle());
+        for (int i = 0; i < tips.length; i++) {
+            targetAngleDeg[i] = Math.toDegrees(tips[i].bone.angle());
         }
     }
 
@@ -134,6 +161,63 @@ public class Anchor extends Attachable {
         for (Tip tip : tips) {
             tip.position = newPosition;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // re-derives each participant's far tip directly from this anchor's own
+    // locked target angle. Meant to run right after moveTo(), before
+    // freezeFarTips()/a position-only solve: it's what actually repositions
+    // the far tip to match the angle that solve is about to be locked out of
+    // touching (moveTo only moved the near tip; without this, freezing the
+    // far tip in place would freeze it at its stale pre-drag position,
+    // stretching the bone). A no-op when angleEnabled is false, since there's
+    // no locked angle to preserve.
+    public void holdAngles() {
+        if (!angleEnabled) {
+            return;
+        }
+        for (int i = 0; i < tips.length; i++) {
+            Bone bone = tips[i].bone;
+            bone.angleDeg = targetAngleDeg[i];
+            bone.recomputeTip(tips[i].tipIdx);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // temporarily makes every participant's far tip immovable too (both ends
+    // of each of this anchor's own segments fixed, not just the near one),
+    // for the duration of a position-only solve (e.g. during a right-drag).
+    // That solve only understands length/coincidence, not angle -- so a far
+    // tip that's merely free (the normal state) can still get dragged off
+    // holdAngles()'s just-set position by a Joint.enforceCoincidence() with
+    // whatever's attached beyond it (e.g. an arm bending back from an elbow
+    // anchor into the shoulder), even though holdAngles() got it right just
+    // before the solve ran. Freezing it here makes the solve treat this
+    // anchor's own segments as fully rigid, so only the REST of the chain
+    // (e.g. a knee between this anchor and another) is left to settle. Undo
+    // with unfreezeFarTips() right after the solve, or normal dragging/
+    // physics would stay locked out of ever moving these tips again. A no-op
+    // when angleEnabled is false (nothing was set to hold in the first place).
+    public void freezeFarTips() {
+        if (!angleEnabled) {
+            return;
+        }
+        farOriginalInvMass = new double[farTips.length];
+        for (int i = 0; i < farTips.length; i++) {
+            farOriginalInvMass[i] = farTips[i].invMass;
+            farTips[i].invMass = 0.0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    public void unfreezeFarTips() {
+        if (farOriginalInvMass == null) {
+            return;
+        }
+        for (int i = 0; i < farTips.length; i++) {
+            farTips[i].invMass = farOriginalInvMass[i];
+        }
+        farOriginalInvMass = null;
     }
 
     // -------------------------------------------------------------------------
@@ -170,6 +254,13 @@ public class Anchor extends Attachable {
         TupleD perpendicular = new TupleD(-u.second, u.first);
         TupleD force = perpendicular.times(torque / leverLength);
         farTip.applyForce(force, dt);
+        // equal-and-opposite reaction at the pivot -- a genuine torque couple,
+        // net force zero. A no-op while the pivot is still position-locked
+        // (invMass=0, so applyForce already does nothing there), but once
+        // releasePosition() makes it a real movable point again, this is what
+        // stops the angle-lock from quietly injecting net momentum into the
+        // whole body instead of just correcting its rotation.
+        pivot.applyForce(force.times(-1.0), dt);
     }
 
     // -------------------------------------------------------------------------

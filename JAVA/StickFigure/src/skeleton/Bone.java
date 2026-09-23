@@ -28,12 +28,16 @@ public class Bone {
 
         tips[0] = new Tip();
         tips[0].position = position;
+        tips[0].bone = this;
+        tips[0].tipIdx = 0;
 
         double angleRad = Math.toRadians(angleDeg);
         TupleD offset = new TupleD(length * Math.cos(angleRad), length * Math.sin(angleRad));
         tips[1] = new Tip();
         tips[1].position = position.add(offset);
-        
+        tips[1].bone = this;
+        tips[1].tipIdx = 1;
+
         tips[0].ats.add(new Attachable());
         tips[1].ats.add(new Attachable());
     }

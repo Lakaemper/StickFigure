@@ -67,6 +67,10 @@ public class Viewer extends JFrame {
     public Consumer<File> onLoadTarget;
     public Runnable onMorph;
 
+    // Jump: a single button that starts a whole automated sequence (Main
+    // owns what that sequence actually does) -- Viewer just reports the click.
+    public Runnable onJump;
+
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
     // (Main) is responsible for e.g. finding the nearest tip and moving it.
@@ -269,8 +273,15 @@ public class Viewer extends JFrame {
             }
         });
 
+        JButton jumpButton = new JButton("JUMP");
+        jumpButton.addActionListener(e -> {
+            if (onJump != null) {
+                onJump.run();
+            }
+        });
+
         for (JButton b : new JButton[]{playPauseButton, stepButton, resetButton, storePoseButton,
-                loadPoseButton, loadTargetButton, morphButton}) {
+                loadPoseButton, loadTargetButton, morphButton, jumpButton}) {
             b.setPreferredSize(BUTTON_SIZE);
             b.setMaximumSize(BUTTON_SIZE);
         }
@@ -285,6 +296,8 @@ public class Viewer extends JFrame {
         controls.add(loadTargetButton);
         controls.add(morphButton);
         controls.add(morphTimeSlider);
+        controls.add(Box.createVerticalStrut(12));
+        controls.add(jumpButton);
         return controls;
     }
 
@@ -311,6 +324,13 @@ public class Viewer extends JFrame {
     public void stopPlaying() {
         playing = false;
         playPauseButton.setText("Play");
+    }
+
+    // starts Play (as if it were pressed) without touching anything else --
+    // e.g. so an automated sequence (Jump) can set itself running.
+    public void startPlaying() {
+        playing = true;
+        playPauseButton.setText("Pause");
     }
 
     public void drawLine(TupleD from, TupleD to) {

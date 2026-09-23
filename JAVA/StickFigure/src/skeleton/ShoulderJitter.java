@@ -14,12 +14,16 @@ public class ShoulderJitter extends PhysicalUpgrades {
     private final double[] baseTargetAngleDeg;
     private final double[] phase;
 
-    public double amplitudeDeg = 4.0;
+    public double amplitudeDeg;
     public double phaseStepPerCall = 0.006; // radians of phase advance per process() call
 
     // -------------------------------------------------------------------------
-    public ShoulderJitter(Motor[] motors) {
+    // amplitudeDeg is authored per-pose (Body reads it from the "PhysicalUpgrades"
+    // JSON entry) -- a standing figure and one held rigid mid-flight want quite
+    // different amounts of idle sway.
+    public ShoulderJitter(Motor[] motors, double amplitudeDeg) {
         this.motors = motors;
+        this.amplitudeDeg = amplitudeDeg;
         baseTargetAngleDeg = new double[motors.length];
         phase = new double[motors.length];
         for (int i = 0; i < motors.length; i++) {
