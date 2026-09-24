@@ -1,0 +1,48 @@
+{
+  "Body": {
+    "Name": "Stan",
+    "RootPosition": [-1.1430718991048086, 0.19893845167760538],
+    "Bones": [
+      {"Name": "torso", "Tip0": "hip", "Tip1": "shoulder", "Length": 0.6, "Angle": 113.59261116941894, "Mass": 8.0},
+      {"Name": "upperArmL", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.3, "Angle": 148.88738798586877, "Mass": 1.5},
+      {"Name": "foreArmL", "Tip0": "elbow", "Tip1": "hand", "Length": 0.3, "Angle": 121.8075939597407, "Mass": 1.0},
+      {"Name": "upperArmR", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.3, "Angle": 177.76882539196873, "Mass": 1.5},
+      {"Name": "foreArmR", "Tip0": "elbow", "Tip1": "hand", "Length": 0.3, "Angle": 159.61202815038746, "Mass": 1.0},
+      {"Name": "thighL", "Tip0": "hip", "Tip1": "knee", "Length": 0.4, "Angle": -41.073488524382036, "Mass": 3.0},
+      {"Name": "shinL", "Tip0": "knee", "Tip1": "foot", "Length": 0.4, "Angle": -8.725194648871488, "Mass": 2.0},
+      {"Name": "thighR", "Tip0": "hip", "Tip1": "knee", "Length": 0.4, "Angle": -15.592019539245461, "Mass": 3.0},
+      {"Name": "shinR", "Tip0": "knee", "Tip1": "foot", "Length": 0.4, "Angle": -12.234923294724089, "Mass": 2.0},
+      {"Name": "head", "Tip0": "neck", "Tip1": "head", "Length": 0.2, "Angle": 115.51114038809436, "Mass": 2.0, "Type": "head"}
+    ],
+    "Attachables": [
+      {"name": "shoulderL", "Type": "joint", "Bone0": "torso", "TipIdx0": 1, "Bone1": "upperArmL", "TipIdx1": 0},
+      {"name": "shoulderR", "Type": "joint", "Bone0": "torso", "TipIdx0": 1, "Bone1": "upperArmR", "TipIdx1": 0},
+      {"name": "elbowL", "Type": "joint", "Bone0": "upperArmL", "TipIdx0": 1, "Bone1": "foreArmL", "TipIdx1": 0},
+      {"name": "elbowR", "Type": "joint", "Bone0": "upperArmR", "TipIdx0": 1, "Bone1": "foreArmR", "TipIdx1": 0},
+      {"name": "hipL", "Type": "joint", "Bone0": "torso", "TipIdx0": 0, "Bone1": "thighL", "TipIdx1": 0},
+      {"name": "kneeL", "Type": "joint", "Bone0": "thighL", "TipIdx0": 1, "Bone1": "shinL", "TipIdx1": 0},
+      {"name": "hipR", "Type": "joint", "Bone0": "torso", "TipIdx0": 0, "Bone1": "thighR", "TipIdx1": 0},
+      {"name": "kneeR", "Type": "joint", "Bone0": "thighR", "TipIdx0": 1, "Bone1": "shinR", "TipIdx1": 0},
+      {"name": "neck", "Type": "joint", "Bone0": "torso", "TipIdx0": 1, "Bone1": "head", "TipIdx1": 0},
+      {"name": "shoulderL", "Type": "motor", "Joint": "shoulderL", "TargetAngle": -144.70522318355017, "Stiffness": 20.0, "Damping": 4.0, "MaxTorque": 15.0, "Enabled": true},
+      {"name": "shoulderR", "Type": "motor", "Joint": "shoulderR", "TargetAngle": -115.82378577745021, "Stiffness": 20.0, "Damping": 4.0, "MaxTorque": 15.0, "Enabled": true},
+      {"name": "elbowL", "Type": "motor", "Joint": "elbowL", "TargetAngle": 152.92020597387193, "Stiffness": 20.0, "Damping": 4.0, "MaxTorque": 15.0, "Enabled": true},
+      {"name": "elbowR", "Type": "motor", "Joint": "elbowR", "TargetAngle": 161.84320275841873, "Stiffness": 20.0, "Damping": 4.0, "MaxTorque": 15.0, "Enabled": true},
+      {"name": "hipL", "Type": "motor", "Joint": "hipL", "TargetAngle": -154.666099693801, "Stiffness": 300.0, "Damping": 60.0, "MaxTorque": 150.0, "Enabled": false},
+      {"name": "hipR", "Type": "motor", "Joint": "hipR", "TargetAngle": -129.18463070866443, "Stiffness": 300.0, "Damping": 60.0, "MaxTorque": 150.0, "Enabled": false},
+      {"name": "kneeL", "Type": "motor", "Joint": "kneeL", "TargetAngle": -147.65170612448946, "Stiffness": 300.0, "Damping": 40.0, "MaxTorque": 155.0, "Enabled": true},
+      {"name": "kneeR", "Type": "motor", "Joint": "kneeR", "TargetAngle": -176.64290375547864, "Stiffness": 300.0, "Damping": 40.0, "MaxTorque": 155.0, "Enabled": true},
+      {"name": "neck", "Type": "motor", "Joint": "neck", "TargetAngle": -178.08147078132458, "Stiffness": 20.0, "Damping": 4.0, "MaxTorque": 25.0, "Enabled": true},
+      {"name": "footL", "Type": "frictionPad", "Bone": "shinL", "TipIdx": 1, "FrictionCoefficient": 0.8},
+      {"name": "footR", "Type": "frictionPad", "Bone": "shinR", "TipIdx": 1, "FrictionCoefficient": 0.8},
+      {"name": "handL", "Type": "frictionPad", "Bone": "foreArmL", "TipIdx": 1, "FrictionCoefficient": 0.8},
+      {"name": "handR", "Type": "frictionPad", "Bone": "foreArmR", "TipIdx": 1, "FrictionCoefficient": 0.8},
+      {"Name": "shinL_foot", "Type": "anchor", "AngleEnabled": false},
+      {"Name": "shinR_foot", "Type": "anchor", "AngleEnabled": false},
+      {"Name": "upperArmR_elbow", "Type": "anchor", "AngleEnabled": false},
+      {"Name": "foreArmL_elbow", "Type": "anchor", "AngleEnabled": false},
+      {"Name": "thighL_hip", "Type": "anchor", "AngleEnabled": true}
+    ],
+    "PhysicalUpgrades": [{"Type": "HandJitter", "AmplitudeDeg": 12.0}, {"Type": "ShoulderJitter", "AmplitudeDeg": 12.0}]
+  }
+}
