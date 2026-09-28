@@ -41,6 +41,13 @@ public class World {
                                        // spurious velocity once corrected -- see the
                                        // standing tuning notes for how this was found
 
+    // when true, pinLandedTips() does nothing -- e.g. so a deliberate "drop all
+    // anchors" (JUMP's post-collision ragdoll timer) actually stays dropped,
+    // instead of the very next frame re-pinning the same still-touching-the-
+    // ground/wall FrictionPad tip right back down. The caller is responsible
+    // for turning this off again when landed-pinning should resume (e.g. Reset).
+    public boolean suppressAutoLanding = false;
+
     // -------------------------------------------------------------------------
     public World(Body body) {
         this.body = body;
@@ -64,6 +71,9 @@ public class World {
     // continuing to slide or settle indefinitely. A no-op for a tip that's
     // already anchored (Body.addAnchor's own guard).
     private void pinLandedTips() {
+        if (suppressAutoLanding) {
+            return;
+        }
         for (Tip tip : body.frictionPads.keySet()) {
             if (tip.position.second <= 0.0) {
                 tip.position = new TupleD(tip.position.first, 0.0);

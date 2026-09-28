@@ -10,10 +10,13 @@ import animation.World;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 import skeleton.Body;
 import skeleton.Bone;
 import skeleton.Tip;
 import skeleton.attachables.Anchor;
+import skeleton.attachables.Motor;
 import utils.TupleD;
 import viewer.Viewer;
 
@@ -32,8 +35,8 @@ public class Main {
     private static final double DRAG_KICK_SCALE = 6.0; // velocity gained per unit dragged
 
     // JUMP sequence constants -- see onJump/onStep wiring below.
-    private static final String JUMP_CHARGE_POSE_PATH = "C:\\Users\\rlaka\\Documents\\Charging.json";
-    private static final String JUMP_FLYING_POSE_PATH = "C:\\Users\\rlaka\\Documents\\a_pose_flying.json";
+    private static final String JUMP_CHARGE_POSE_PATH = "src/assets/Charging.json";
+    private static final String JUMP_FLYING_POSE_PATH = "src/assets/a_pose_flying.json";
     private static final double JUMP_START_X = 4.5; // near the viewer's right edge; this
                                                       // charging pose leans left from the
                                                       // hip, so the hip itself is the body's
@@ -41,8 +44,20 @@ public class Main {
     private static final double JUMP_CHARGE_SECONDS = 1.0;
     private static final double JUMP_MORPH_SECONDS = 0.5;
     private static final double JUMP_LAUNCH_ANGLE_DEG = 45.0;
-    private static final double JUMP_LAUNCH_SPEED = 9.0; // m/s, to the left -- needs
+    private static final double JUMP_LAUNCH_SPEED = 6.7; // m/s, to the left -- needs
             // enough range to reach the center-left wall obstacle while still airborne
+    private static final double JUMP_RAGDOLL_DELAY_SECONDS = 2.0; // how long after the
+            // FIRST post-launch collision the figure keeps hanging on its landed
+            // anchors before they're all released, letting it fall/ragdoll freely
+    private static final double JUMP_RECOVER_DELAY_SECONDS = 1.0; // how long after the
+            // NEXT collision (the fall after the anchor release above) the figure
+            // keeps ragdolling before morphing back to Initial.json's standing pose
+    private static final String JUMP_STAND_POSE_PATH = "src/assets/Initial.json";
+    private static final int RAGDOLL_RELEASE_SUPPRESSION_FRAMES = 12; // ~0.2s: briefly
+            // keep auto-landing suppressed right after releasing the anchors, so the
+            // same still-touching tip doesn't get re-pinned before it's actually had
+            // a chance to fall away -- otherwise the "next collision" below would
+            // fire immediately, on the very same spot, instead of after a real fall.
 
     /**
      * @param args the command line arguments
@@ -52,7 +67,7 @@ public class Main {
 
         Body body = new Body();
         World world = new World(body);
-        world.obstacles.add(buildOverhangingWall());
+        world.obstacles.addAll(buildRockField());
         resetBody(body, world);
 
         PoseMorpher poseMorpher = new PoseMorpher();
@@ -68,6 +83,35 @@ public class Main {
         boolean[] jumpCharging = {false};
         double[] jumpChargeElapsed = {0.0};
         boolean[] jumpPendingLaunch = {false};
+
+        // post-launch ragdoll/recover sequence, four phases in order:
+        //  1. awaitingCollision: true from the moment of launch until the figure
+        //     first lands on something (body.anchors going from empty to non-empty,
+        //     via World.pinLandedTips). At that instant every motor except the neck
+        //     is disabled -- once part of the body is pinned (e.g. a hand+elbow
+        //     grabbing the wall), a motor whose far tip is now pinned can no longer
+        //     move that side, so its whole reaction torque lands one-sided on
+        //     whatever's still hanging free, swinging it like a pendulum instead of
+        //     holding a pose that no longer matches reality. Then collisionTimerRunning
+        //     counts up for JUMP_RAGDOLL_DELAY_SECONDS.
+        //  2. at that timer's end, every anchor is released (body.launch with a zero
+        //     kick) and auto-landing is suppressed for RAGDOLL_RELEASE_SUPPRESSION_FRAMES
+        //     (landingSuppressionFramesLeft) so the same still-touching tip doesn't
+        //     just get re-pinned next frame -- it needs to actually fall away first.
+        //  3. once that brief suppression ends, awaitingSecondCollision waits for the
+        //     figure to land again (a genuine second collision, after really falling),
+        //     then secondCollisionTimerRunning counts up for JUMP_RECOVER_DELAY_SECONDS.
+        //  4. at THAT timer's end, a morph back to Initial.json's standing pose starts,
+        //     left foot (shinL/tip1) held as the fixpoint -- jumpPendingStandRecovery
+        //     marks that motors should be re-enabled once that morph completes.
+        boolean[] awaitingCollision = {false};
+        boolean[] collisionTimerRunning = {false};
+        double[] secondsSinceCollision = {0.0};
+        int[] landingSuppressionFramesLeft = {0};
+        boolean[] awaitingSecondCollision = {false};
+        boolean[] secondCollisionTimerRunning = {false};
+        double[] secondsSinceSecondCollision = {0.0};
+        boolean[] jumpPendingStandRecovery = {false};
 
         viewer.onStep = () -> {
             if (poseMorpher.isActive()) {
@@ -88,6 +132,14 @@ public class Main {
                         }
                         body.applyPhysicalUpgradesFrom(targetPose[0]);
                     }
+                    if (jumpPendingStandRecovery[0]) {
+                        // reached the standing pose -- motors can safely hold
+                        // it again now that nothing is still half-pinned.
+                        jumpPendingStandRecovery[0] = false;
+                        for (Motor m : body.motors) {
+                            m.enabled = true;
+                        }
+                    }
                     if (jumpPendingLaunch[0]) {
                         // kick: drop every anchor (including the ones just
                         // reattached above) and launch, then keep playing --
@@ -95,6 +147,8 @@ public class Main {
                         jumpPendingLaunch[0] = false;
                         double rad = Math.toRadians(JUMP_LAUNCH_ANGLE_DEG);
                         body.launch(new TupleD(-JUMP_LAUNCH_SPEED * Math.cos(rad), JUMP_LAUNCH_SPEED * Math.sin(rad)));
+                        awaitingCollision[0] = true;
+                        collisionTimerRunning[0] = false;
                     } else {
                         viewer.stopPlaying();
                     }
@@ -115,6 +169,57 @@ public class Main {
                         targetPose[0] = flying;
                         Tip fixpointTip = findBoneByName(body, "shinL").tips[1];
                         poseMorpher.setTarget(flying, JUMP_MORPH_SECONDS, fixpointTip.position, fixpointTip);
+                    }
+                }
+                if (awaitingCollision[0] && !body.anchors.isEmpty()) {
+                    // first post-launch collision: World.pinLandedTips() just
+                    // anchored something -- disable every motor (see the state
+                    // declaration above for why) EXCEPT the neck, which is left
+                    // on so the head keeps actively holding/orienting itself
+                    // instead of also going limp, and start the
+                    // recover-to-standing countdown.
+                    awaitingCollision[0] = false;
+                    collisionTimerRunning[0] = true;
+                    secondsSinceCollision[0] = 0.0;
+                    for (Motor m : body.motors) {
+                        if (!"neck".equals(m.name)) {
+                            m.enabled = false;
+                        }
+                    }
+                } else if (collisionTimerRunning[0]) {
+                    secondsSinceCollision[0] += 1.0 / 60.0;
+                    if (secondsSinceCollision[0] >= JUMP_RAGDOLL_DELAY_SECONDS) {
+                        collisionTimerRunning[0] = false;
+                        world.suppressAutoLanding = true;
+                        body.launch(new TupleD(0.0, 0.0)); // drops every anchor, zero kick
+                        landingSuppressionFramesLeft[0] = RAGDOLL_RELEASE_SUPPRESSION_FRAMES;
+                    }
+                } else if (landingSuppressionFramesLeft[0] > 0) {
+                    landingSuppressionFramesLeft[0]--;
+                    if (landingSuppressionFramesLeft[0] == 0) {
+                        world.suppressAutoLanding = false;
+                        awaitingSecondCollision[0] = true;
+                    }
+                } else if (awaitingSecondCollision[0] && !body.anchors.isEmpty()) {
+                    // the next real collision, after actually falling away from
+                    // the release point -- start the recover-to-standing countdown.
+                    awaitingSecondCollision[0] = false;
+                    secondCollisionTimerRunning[0] = true;
+                    secondsSinceSecondCollision[0] = 0.0;
+                } else if (secondCollisionTimerRunning[0]) {
+                    secondsSinceSecondCollision[0] += 1.0 / 60.0;
+                    if (secondsSinceSecondCollision[0] >= JUMP_RECOVER_DELAY_SECONDS) {
+                        secondCollisionTimerRunning[0] = false;
+                        jumpPendingStandRecovery[0] = true;
+                        Body standing = new Body();
+                        try {
+                            standing.buildFromConfig(JUMP_STAND_POSE_PATH);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                        targetPose[0] = standing;
+                        Tip fixpointTip = findBoneByName(body, "shinL").tips[1]; // left foot
+                        poseMorpher.setTarget(standing, JUMP_MORPH_SECONDS, fixpointTip.position, fixpointTip);
                     }
                 }
             }
@@ -249,6 +354,13 @@ public class Main {
             jumpChargeElapsed[0] = 0.0;
             jumpCharging[0] = true;
             jumpPendingLaunch[0] = false;
+            awaitingCollision[0] = false;
+            collisionTimerRunning[0] = false;
+            landingSuppressionFramesLeft[0] = 0;
+            awaitingSecondCollision[0] = false;
+            secondCollisionTimerRunning[0] = false;
+            jumpPendingStandRecovery[0] = false;
+            world.suppressAutoLanding = false;
 
             viewer.clear();
             drawObstacles(world);
@@ -258,25 +370,45 @@ public class Main {
     }
 
     // -------------------------------------------------------------------------
-    // a tall, thin slab standing on the ground at center-left, tilted 30
-    // degrees off vertical so its top overhangs toward +x -- i.e. leaning
-    // out over the incoming JUMP flight path (launched from the right,
-    // arcing up and to the left), so the figure runs into the underside of
-    // the overhang or its tilted face rather than just its foot.
-    private static Polygon buildOverhangingWall() {
-        double tiltRad = Math.toRadians(-30.0); // negative = top leans toward +x
-        double height = 2.5;
-        double thickness = 0.3;
-        TupleD base = new TupleD(-2.0, 0.0);
-        TupleD[] local = {
-            new TupleD(-thickness / 2, 0),
-            new TupleD(thickness / 2, 0),
-            new TupleD(thickness / 2, height),
-            new TupleD(-thickness / 2, height)
-        };
-        TupleD[] vertices = new TupleD[local.length];
-        for (int i = 0; i < local.length; i++) {
-            vertices[i] = local[i].rotate(tiltRad, new TupleD(0, 0)).add(base);
+    // A Bugaboo-style rock field, replacing the single wall: a scattered climb
+    // of platforms rising up and to the left, meant to be reached by a sequence
+    // of jumps (angle/speed to be aimed per jump -- not built here, see the
+    // outlook this was requested against). The first rock sits almost exactly
+    // on the CURRENT scripted jump's own ballistic arc (JUMP_LAUNCH_SPEED at
+    // JUMP_LAUNCH_ANGLE_DEG from JUMP_START_X lands on it essentially as-is);
+    // each rock after that is progressively higher and further left than a
+    // single unmodified jump reaches, so climbing further requires a
+    // differently-aimed jump launched from the rock just reached -- the
+    // "finding the right jump" challenge the outlook describes, once that
+    // per-jump aiming actually exists. The last one is the highest platform,
+    // i.e. the goal.
+    private static List<Polygon> buildRockField() {
+        List<Polygon> rocks = new ArrayList<>();
+        rocks.add(buildRock(1.7, 1.3, 0.55, 10.0, 1));
+        rocks.add(buildRock(-0.5, 1.9, 0.55, -15.0, 2));
+        rocks.add(buildRock(-2.0, 2.5, 0.6, 12.0, 3));
+        rocks.add(buildRock(-3.5, 3.1, 0.55, -10.0, 4));
+        rocks.add(buildRock(-4.8, 3.8, 0.7, 0.0, 5)); // highest platform: the goal
+        return rocks;
+    }
+
+    // -------------------------------------------------------------------------
+    // one irregular rock/boulder: a jittered nonagon around (centerX, centerY),
+    // each vertex's own radius randomized between 70% and 100% of `radius` (but
+    // seeded, so the shape is reproducible run to run), then rotated by tiltDeg
+    // for visual variety -- purely cosmetic irregularity, doesn't affect
+    // collision beyond the resulting polygon's own actual shape.
+    private static Polygon buildRock(double centerX, double centerY, double radius, double tiltDeg, long seed) {
+        int n = 9;
+        Random rnd = new Random(seed);
+        TupleD center = new TupleD(centerX, centerY);
+        double tiltRad = Math.toRadians(tiltDeg);
+        TupleD[] vertices = new TupleD[n];
+        for (int i = 0; i < n; i++) {
+            double angle = 2.0 * Math.PI * i / n;
+            double r = radius * (0.7 + 0.3 * rnd.nextDouble());
+            TupleD local = new TupleD(r * Math.cos(angle), r * Math.sin(angle));
+            vertices[i] = local.rotate(tiltRad, new TupleD(0, 0)).add(center);
         }
         return new Polygon(vertices);
     }
@@ -296,8 +428,9 @@ public class Main {
     // pose (if LoadPose has been used) or the default starting pose -- shared
     // by startup and the Reset button so they can never drift apart.
     private static void resetBody(Body body, World world) {
+        world.suppressAutoLanding = false;
         try {
-            body.buildFromConfig("src/assets/Skeletons.json");
+            body.buildFromConfig("src/assets/Initial.json");
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
