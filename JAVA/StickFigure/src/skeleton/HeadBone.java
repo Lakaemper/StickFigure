@@ -1,5 +1,6 @@
 package skeleton;
 
+import java.awt.Color;
 import main.Main;
 import utils.TupleD;
 
@@ -25,6 +26,6 @@ public class HeadBone extends Bone {
         Main.viewer.drawLine(tip0, half);
 
         TupleD headCenter = tip0.add(delta.times(2.0 / 3.0));
-        Main.viewer.drawCircle(headCenter, length / 2.0);
+        Main.viewer.drawFilledCircle(headCenter, length / 2.0, Color.ORANGE);
     }
 }

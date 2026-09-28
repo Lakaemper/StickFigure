@@ -6,15 +6,20 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
 import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import javax.imageio.ImageIO;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
@@ -30,7 +35,7 @@ public class Viewer extends JFrame {
 
     private static final int DISPLAY_WIDTH = 2000;
     private static final int DISPLAY_HEIGHT = 1200;
-    private static final double SCALE = 200.0; // pixels per unit
+    private static final double SCALE = 100.0; // pixels per unit
 
     private static final Dimension BUTTON_SIZE = new Dimension(130, 28); // uniform, independent of label text
 
@@ -40,13 +45,31 @@ public class Viewer extends JFrame {
     private static final int STEP_DELAY_MS = 16; // ~60fps while playing
     private static final int CLICK_THRESHOLD_PIXELS = 5; // press-release moves less than this = a click, not a drag
 
-    private static final Color ELLIPSE_FILL = new Color(255, 0, 0, (int) Math.round(0.7 * 255));
+    private static final Color ELLIPSE_FILL = new Color(255, 0, 0, 255);
 
     private final List<TupleD[]> lines = new ArrayList<>();
     private final List<Circle> circles = new ArrayList<>();
     private final List<Ellipse> ellipses = new ArrayList<>();
+    private final List<Rect> rects = new ArrayList<>();
+    private final List<Poly> polys = new ArrayList<>();
     private boolean floorVisible = false;
     private final DrawPanel panel = new DrawPanel();
+
+    // a tiled, scrolling backdrop (e.g. a jungle texture) drawn behind
+    // everything else -- see loadBackgroundImage. Scrolls at
+    // BACKGROUND_PARALLAX_FACTOR times the foreground's own camera motion
+    // (less than 1), so it visually sits further away -- a classic parallax
+    // depth cue -- while tiling seamlessly regardless of how far the camera
+    // has scrolled, via a modulo offset (see DrawPanel.paintComponent).
+    private BufferedImage backgroundImage;
+    private static final double BACKGROUND_PARALLAX_FACTOR = 0.25;
+
+    // the world point that always renders at screen center -- e.g. Main sets
+    // this to the figure's own neck tip every frame, turning the viewer into
+    // a scrolling window that follows the figure instead of a fixed stage.
+    // Defaults to the world origin, so anything that never calls
+    // setCameraFocus behaves exactly as if there were no camera at all.
+    private TupleD cameraFocus = new TupleD(0.0, 0.0);
 
     // set by whoever wants Play/Step/Reset to actually do something (e.g. Main
     // wiring up an animation.World) -- Viewer itself has no idea what a step or
@@ -70,6 +93,16 @@ public class Viewer extends JFrame {
     // Jump: a single button that starts a whole automated sequence (Main
     // owns what that sequence actually does) -- Viewer just reports the click.
     public Runnable onJump;
+
+    // keyboard-triggered jumps -- 'o'/'p' while the draw panel has focus (see
+    // the KeyListener below). Separate from onJump: Main owns what direction
+    // means and what sequence runs, Viewer just reports which key. Fired on
+    // press (start charging); onJumpKeyReleased fires when EITHER key comes
+    // back up (Main only ever has one jump in progress at a time, so it
+    // doesn't need to know which key this was -- just that charging ended).
+    public Runnable onJumpLeft;
+    public Runnable onJumpRight;
+    public Runnable onJumpKeyReleased;
 
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
@@ -113,10 +146,36 @@ public class Viewer extends JFrame {
         TupleD center;
         double radius;
         Color color;
+        boolean filled;
 
-        Circle(TupleD center, double radius, Color color) {
+        Circle(TupleD center, double radius, Color color, boolean filled) {
             this.center = center;
             this.radius = radius;
+            this.color = color;
+            this.filled = filled;
+        }
+    }
+
+    private static class Poly {
+        TupleD[] vertices;
+        Color color;
+
+        Poly(TupleD[] vertices, Color color) {
+            this.vertices = vertices;
+            this.color = color;
+        }
+    }
+
+    private static class Rect {
+        TupleD center;
+        double width;
+        double height;
+        Color color;
+
+        Rect(TupleD center, double width, double height, Color color) {
+            this.center = center;
+            this.width = width;
+            this.height = height;
             this.color = color;
         }
     }
@@ -139,6 +198,7 @@ public class Viewer extends JFrame {
         super("Stick Figure");
         panel.setPreferredSize(new Dimension(DISPLAY_WIDTH, DISPLAY_HEIGHT));
         panel.setBackground(Color.WHITE);
+        panel.setFocusable(true); // so it can actually receive key events below
         add(panel, BorderLayout.CENTER);
         add(buildControls(), BorderLayout.EAST);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -146,11 +206,35 @@ public class Viewer extends JFrame {
         pack();
         setLocationRelativeTo(null);
         setVisible(true);
+        panel.requestFocusInWindow();
         timer.start();
+
+        panel.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                // OS auto-repeat re-fires keyPressed continuously while held;
+                // Main's own "already charging" guard makes repeats harmless,
+                // so no de-duplication is needed here.
+                if (e.getKeyCode() == KeyEvent.VK_O && onJumpLeft != null) {
+                    onJumpLeft.run();
+                } else if (e.getKeyCode() == KeyEvent.VK_P && onJumpRight != null) {
+                    onJumpRight.run();
+                }
+            }
+
+            @Override
+            public void keyReleased(KeyEvent e) {
+                if ((e.getKeyCode() == KeyEvent.VK_O || e.getKeyCode() == KeyEvent.VK_P)
+                        && onJumpKeyReleased != null) {
+                    onJumpKeyReleased.run();
+                }
+            }
+        });
 
         panel.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
+                panel.requestFocusInWindow(); // clicking the panel should also let it catch keys
                 if (e.getButton() == MouseEvent.BUTTON3) {
                     rightDragActive = true;
                     if (onRightDragStart != null) {
@@ -211,8 +295,23 @@ public class Viewer extends JFrame {
         });
     }
 
-    private static TupleD toWorld(int screenX, int screenY) {
-        return new TupleD((screenX - ORIGIN_X) / SCALE, (ORIGIN_Y - screenY) / SCALE);
+    private TupleD toWorld(int screenX, int screenY) {
+        return new TupleD((screenX - ORIGIN_X) / SCALE + cameraFocus.first,
+                (ORIGIN_Y - screenY) / SCALE + cameraFocus.second);
+    }
+
+    // the world point that should render at screen center from now on --
+    // call every frame (e.g. right before clearing/redrawing) to keep the
+    // view scrolled to wherever that point currently is.
+    public void setCameraFocus(TupleD worldPos) {
+        this.cameraFocus = worldPos;
+    }
+
+    // loads (once) the image tiled behind everything else -- Main decides
+    // which file, Viewer just handles the Swing-side loading/rendering.
+    public void loadBackgroundImage(String filePath) throws IOException {
+        backgroundImage = ImageIO.read(new File(filePath));
+        panel.repaint();
     }
 
     // a length in world units that renders as a fixed number of screen pixels
@@ -343,7 +442,14 @@ public class Viewer extends JFrame {
     }
 
     public void drawCircle(TupleD center, double radius, Color color) {
-        circles.add(new Circle(center, radius, color));
+        circles.add(new Circle(center, radius, color, false));
+        panel.repaint();
+    }
+
+    // a filled circle -- e.g. HeadBone's own head, as opposed to the plain
+    // outline anchor markers use via the other drawCircle overloads.
+    public void drawFilledCircle(TupleD center, double radius, Color color) {
+        circles.add(new Circle(center, radius, color, true));
         panel.repaint();
     }
 
@@ -354,10 +460,26 @@ public class Viewer extends JFrame {
         panel.repaint();
     }
 
+    // an axis-aligned filled rectangle -- e.g. a charge-meter bar.
+    public void drawRect(TupleD center, double width, double height, Color color) {
+        rects.add(new Rect(center, width, height, color));
+        panel.repaint();
+    }
+
+    // a filled, closed polygon -- e.g. an animation.Polygon obstacle's
+    // interior. Use a translucent color (non-opaque alpha) if it shouldn't
+    // hide whatever's drawn under/over it.
+    public void drawPolygon(TupleD[] vertices, Color color) {
+        polys.add(new Poly(vertices, color));
+        panel.repaint();
+    }
+
     public void clear() {
         lines.clear();
         circles.clear();
         ellipses.clear();
+        rects.clear();
+        polys.clear();
         panel.repaint();
     }
 
@@ -374,11 +496,48 @@ public class Viewer extends JFrame {
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
             Graphics2D g2 = (Graphics2D) g;
+
+            // snapshot each draw list before iterating -- Main can clear()/
+            // repopulate them from the next onStep tick at any time, and
+            // iterating the live list directly occasionally raced against
+            // that (a ConcurrentModificationException, seen intermittently
+            // in practice). Iterating a frozen copy instead makes that
+            // impossible: worst case this paint shows one tick's stale/mixed
+            // frame, harmless at 60fps since the next paint self-corrects.
+            List<Poly> polysSnapshot = new ArrayList<>(polys);
+            List<TupleD[]> linesSnapshot = new ArrayList<>(lines);
+            List<Circle> circlesSnapshot = new ArrayList<>(circles);
+            List<Rect> rectsSnapshot = new ArrayList<>(rects);
+            List<Ellipse> ellipsesSnapshot = new ArrayList<>(ellipses);
+
+            if (backgroundImage != null) {
+                int imgW = backgroundImage.getWidth();
+                int imgH = backgroundImage.getHeight();
+                // same screen-shift math as the foreground's cx/cy below, just
+                // scaled by BACKGROUND_PARALLAX_FACTOR (<1) so it moves less --
+                // farther away, visually. Wrapped into a single tile's worth via
+                // modulo so it tiles seamlessly no matter how far the camera
+                // has scrolled, rather than the offset growing without bound.
+                int shiftX = -(int) Math.round(cameraFocus.first * SCALE * BACKGROUND_PARALLAX_FACTOR);
+                int shiftY = (int) Math.round(cameraFocus.second * SCALE * BACKGROUND_PARALLAX_FACTOR);
+                int startX = ((shiftX % imgW) + imgW) % imgW - imgW;
+                int startY = ((shiftY % imgH) + imgH) % imgH - imgH;
+                for (int x = startX; x < getWidth(); x += imgW) {
+                    for (int y = startY; y < getHeight(); y += imgH) {
+                        g2.drawImage(backgroundImage, x, y, null);
+                    }
+                }
+            }
+
             g2.setColor(Color.BLACK);
             g2.setStroke(new BasicStroke(2));
 
-            int cx = ORIGIN_X;
-            int cy = ORIGIN_Y;
+            // shifting the effective screen origin by the camera focus (in
+            // screen pixels) is equivalent to drawing every world point
+            // relative to cameraFocus instead of the world origin -- so
+            // cameraFocus itself always lands exactly at (ORIGIN_X, ORIGIN_Y).
+            int cx = ORIGIN_X - (int) Math.round(cameraFocus.first * SCALE);
+            int cy = ORIGIN_Y + (int) Math.round(cameraFocus.second * SCALE);
 
             if (floorVisible) {
                 g2.setColor(Color.GREEN);
@@ -388,7 +547,21 @@ public class Viewer extends JFrame {
                 g2.setStroke(new BasicStroke(4));
             }
 
-            for (TupleD[] line : lines) {
+            for (Poly p : polysSnapshot) {
+                int n = p.vertices.length;
+                int[] xs = new int[n];
+                int[] ys = new int[n];
+                for (int i = 0; i < n; i++) {
+                    xs[i] = cx + (int) Math.round(p.vertices[i].first * SCALE);
+                    ys[i] = cy - (int) Math.round(p.vertices[i].second * SCALE);
+                }
+                g2.setColor(p.color);
+                g2.fillPolygon(xs, ys, n);
+            }
+            g2.setColor(Color.BLACK);
+            g2.setStroke(new BasicStroke(2));
+
+            for (TupleD[] line : linesSnapshot) {
                 int x1 = cx + (int) Math.round(line[0].first * SCALE);
                 int y1 = cy - (int) Math.round(line[0].second * SCALE);
                 int x2 = cx + (int) Math.round(line[1].first * SCALE);
@@ -396,15 +569,28 @@ public class Viewer extends JFrame {
                 g2.drawLine(x1, y1, x2, y2);
             }
 
-            for (Circle c : circles) {
+            for (Circle c : circlesSnapshot) {
                 int ccx = cx + (int) Math.round(c.center.first * SCALE);
                 int ccy = cy - (int) Math.round(c.center.second * SCALE);
                 int r = (int) Math.round(c.radius * SCALE);
                 g2.setColor(c.color);
-                g2.drawOval(ccx - r, ccy - r, 2 * r, 2 * r);
+                if (c.filled) {
+                    g2.fillOval(ccx - r, ccy - r, 2 * r, 2 * r);
+                } else {
+                    g2.drawOval(ccx - r, ccy - r, 2 * r, 2 * r);
+                }
             }
 
-            for (Ellipse e : ellipses) {
+            for (Rect r : rectsSnapshot) {
+                int w = (int) Math.round(r.width * SCALE);
+                int h = (int) Math.round(r.height * SCALE);
+                int rx = cx + (int) Math.round(r.center.first * SCALE) - w / 2;
+                int ry = cy - (int) Math.round(r.center.second * SCALE) - h / 2;
+                g2.setColor(r.color);
+                g2.fillRect(rx, ry, w, h);
+            }
+
+            for (Ellipse e : ellipsesSnapshot) {
                 int ecx = cx + (int) Math.round(e.center.first * SCALE);
                 int ecy = cy - (int) Math.round(e.center.second * SCALE);
                 int majorPx = (int) Math.round(e.majorRadius * SCALE);

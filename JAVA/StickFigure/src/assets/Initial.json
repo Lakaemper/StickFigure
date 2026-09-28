@@ -7,7 +7,7 @@
                 "Name": "torso",
                 "Tip0":"hip",
                 "Tip1":"shoulder",
-                "Length": 0.6,
+                "Length": 0.2,
                 "Angle": 90,
                 "Mass": 8
             },
@@ -23,7 +23,7 @@
                 "Name": "foreArmL",
                 "Tip0":"elbow",
                 "Tip1":"hand",
-                "Length": 0.3,
+                "Length": 0.7,
                 "Angle": 225,
                 "Mass": 1.0
             },
@@ -39,7 +39,7 @@
                 "Name": "foreArmR",
                 "Tip0":"elbow",
                 "Tip1":"hand",
-                "Length": 0.3,
+                "Length": 0.7,
                 "Angle": -45,
                 "Mass": 1.0
             },
