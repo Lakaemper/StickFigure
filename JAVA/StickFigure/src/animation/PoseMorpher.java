@@ -62,6 +62,13 @@ public class PoseMorpher {
     }
 
     // -------------------------------------------------------------------------
+    // abandons the morph in progress, if any -- e.g. before the body it was
+    // moving gets rebuilt, since it holds on to that body's own fixpoint Tip.
+    public void cancel() {
+        targetPose = null;
+    }
+
+    // -------------------------------------------------------------------------
     // advances the morph by one step and re-poses currentBody accordingly. A
     // no-op if setTarget hasn't been called. The first call after setTarget
     // captures currentBody's own current angles as the interpolation's

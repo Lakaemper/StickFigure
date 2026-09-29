@@ -4,9 +4,11 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import utils.Json;
 
 // -----------------------------------------------------------------------------
@@ -15,33 +17,43 @@ import utils.Json;
 // tip carries the weight ("Stance", a Body.tipByName name). Only angles are
 // stored -- bone lengths come from whatever skeleton plays it, and forward
 // motion isn't stored at all: ClipPlayer derives it by keeping the stance
-// foot planted. File format:
+// foot planted. "Legs" names the bones ClipPlayer solves by IK instead of
+// playing their angles: one {upper, lower} pair per leg, upper tip0 at its
+// root (hip/shoulder), lower tip1 the foot. File format:
 //   {"Type":"Animation", "Duration":1.0, "Loop":true, "Direction":-1,
-//    "Keys":[{"T":0.0, "Stance":"shinL_foot", "Angles":{"torso":94.0, ...}}, ...]}
+//    "Legs":[["thighL","shinL"], ["thighR","shinR"]],
+//    "Keys":[{"T":0.0, "Stance":"shinL_foot", "Contacts":["shinL_foot","shinR_foot"],
+//             "Angles":{"torso":94.0, ...}}, ...]}
+// "Contacts" (optional) lists the feet on the ground from that key on -- what
+// tells ClipPlayer exactly when a planted foot lifts off.
 public class AnimationClip {
 
     public final double duration;
     public final boolean loop;
     public final double direction; // -1 walks toward -x, +1 toward +x, 0 in place/unknown
+    public final List<String[]> legs; // {upper, lower} bone names per leg
     private final List<Key> keys;
 
     public static class Key {
         public final double t;
         public final String stance;
+        public final Set<String> contacts; // feet on the ground from this key on, or null if not given
         public final Map<String, Double> anglesDeg;
 
-        Key(double t, String stance, Map<String, Double> anglesDeg) {
+        Key(double t, String stance, Set<String> contacts, Map<String, Double> anglesDeg) {
             this.t = t;
             this.stance = stance;
+            this.contacts = contacts;
             this.anglesDeg = anglesDeg;
         }
     }
 
     // -------------------------------------------------------------------------
-    private AnimationClip(double duration, boolean loop, double direction, List<Key> keys) {
+    private AnimationClip(double duration, boolean loop, double direction, List<String[]> legs, List<Key> keys) {
         this.duration = duration;
         this.loop = loop;
         this.direction = direction;
+        this.legs = legs;
         this.keys = keys;
     }
 
@@ -55,6 +67,13 @@ public class AnimationClip {
         double duration = ((Number) root.get("Duration")).doubleValue();
         boolean loop = !Boolean.FALSE.equals(root.get("Loop"));
         double direction = root.get("Direction") instanceof Number ? ((Number) root.get("Direction")).doubleValue() : 0.0;
+        List<String[]> legs = new ArrayList<>();
+        if (root.get("Legs") instanceof List) {
+            for (Object o : (List<Object>) root.get("Legs")) {
+                List<Object> pair = (List<Object>) o;
+                legs.add(new String[]{(String) pair.get(0), (String) pair.get(1)});
+            }
+        }
         List<Key> keys = new ArrayList<>();
         for (Object o : (List<Object>) root.get("Keys")) {
             Map<String, Object> k = (Map<String, Object>) o;
@@ -62,13 +81,20 @@ public class AnimationClip {
             for (Map.Entry<String, Object> e : ((Map<String, Object>) k.get("Angles")).entrySet()) {
                 angles.put(e.getKey(), ((Number) e.getValue()).doubleValue());
             }
-            keys.add(new Key(((Number) k.get("T")).doubleValue(), (String) k.get("Stance"), angles));
+            Set<String> contacts = null;
+            if (k.get("Contacts") instanceof List) {
+                contacts = new HashSet<>();
+                for (Object c : (List<Object>) k.get("Contacts")) {
+                    contacts.add((String) c);
+                }
+            }
+            keys.add(new Key(((Number) k.get("T")).doubleValue(), (String) k.get("Stance"), contacts, angles));
         }
         if (keys.size() < 2) {
             throw new IOException(path + " needs at least 2 keys");
         }
         keys.sort((a, b) -> Double.compare(a.t, b.t));
-        return new AnimationClip(duration, loop, direction, keys);
+        return new AnimationClip(duration, loop, direction, legs, keys);
     }
 
     // -------------------------------------------------------------------------
@@ -83,9 +109,9 @@ public class AnimationClip {
             for (Map.Entry<String, Double> e : k.anglesDeg.entrySet()) {
                 angles.put(e.getKey(), 180.0 - e.getValue());
             }
-            m.add(new Key(k.t, k.stance, angles));
+            m.add(new Key(k.t, k.stance, k.contacts, angles));
         }
-        return new AnimationClip(duration, loop, -direction, m);
+        return new AnimationClip(duration, loop, -direction, legs, m);
     }
 
     // -------------------------------------------------------------------------
@@ -122,6 +148,27 @@ public class AnimationClip {
     // weight switches exactly at the key where the other foot touches down.
     public String stanceAt(double t) {
         return keys.get(keyIndexAt(t)).stance;
+    }
+
+    // -------------------------------------------------------------------------
+    // the feet on the ground at time t (those of the key at or before t), or
+    // null if this clip doesn't say -- a foot leaves this set at its lift-off.
+    public Set<String> contactsAt(double t) {
+        return keys.get(keyIndexAt(t)).contacts;
+    }
+
+    // -------------------------------------------------------------------------
+    // the keys where the weight moves to another foot (its touchdown), in
+    // time order -- e.g. candidate points to start the clip from.
+    public List<Key> footfalls() {
+        List<Key> out = new ArrayList<>();
+        for (int i = 0; i < keys.size(); i++) {
+            Key previous = keys.get(neighbor(i, -1));
+            if (i == 0 && !loop || !keys.get(i).stance.equals(previous.stance)) {
+                out.add(keys.get(i));
+            }
+        }
+        return out;
     }
 
     // -------------------------------------------------------------------------

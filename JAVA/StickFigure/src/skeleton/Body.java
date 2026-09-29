@@ -170,6 +170,7 @@ public class Body {
                 if (enabledJson != null) {
                     motor.enabled = (Boolean) enabledJson;
                 }
+                motor.balanced = Boolean.TRUE.equals(a.get("Balanced"));
 
                 joint.tips[0].addAttachable(motor);
                 joint.tips[1].addAttachable(motor);
@@ -268,7 +269,7 @@ public class Body {
             attachableEntries.add("      {\"name\": \"" + m.name + "\", \"Type\": \"motor\", "
                     + "\"Joint\": \"" + m.joint.name + "\", \"TargetAngle\": " + currentTargetDeg + ", "
                     + "\"Stiffness\": " + m.stiffness + ", \"Damping\": " + m.damping + ", "
-                    + "\"MaxTorque\": " + m.maxTorque + ", \"Enabled\": " + m.enabled + "}");
+                    + "\"MaxTorque\": " + m.maxTorque + ", \"Enabled\": " + m.enabled + (m.balanced ? ", \"Balanced\": true" : "") + "}");
         }
         for (Map.Entry<Tip, FrictionPad> e : frictionPads.entrySet()) {
             Tip tip = e.getKey();

@@ -1,36 +1,44 @@
 package animation;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import skeleton.Body;
 import skeleton.Bone;
 import skeleton.Tip;
+import skeleton.attachables.Joint;
 import skeleton.attachables.Motor;
 import utils.TupleD;
 
 // -----------------------------------------------------------------------------
 // Plays an AnimationClip on a Body kinematically, following the terrain --
 // like PoseMorpher, it replaces World.step() while active, so the skeleton
-// is always exactly rigid.
+// is always exactly rigid. Works for any number of legs (the clip's "Legs"):
+// legs whose roots are jointed to the same body point form a GROUP -- both
+// of a biped's legs hang from its hip; a quadruped has two groups, hind legs
+// at the croup and forelegs at the withers.
 //
 // The clip itself is authored for flat ground. Each step:
 //  1. FLAT pose: the clip's (blended) bone angles, laid out from the stance
-//     foot on a virtual flat floor -- gives where the hip and the swing foot
-//     WOULD be relative to the planted foot on flat ground.
-//  2. terrain: the planted foot (or both, in double support) stays exactly
-//     where it touched down -- that is what moves the figure forward without
-//     sliding. The swing foot keeps the flat pose's horizontal path and its
-//     lift above the ground, but on top of whatever ground is under it
+//     foot on a virtual flat floor -- gives where every leg root and every
+//     swing foot WOULD be relative to the planted foot on flat ground.
+//  2. terrain: every planted foot stays exactly where it touched down -- the
+//     stance foot's is what moves the figure forward without sliding. A
+//     swing foot keeps the flat pose's horizontal path and its lift above
+//     the ground, but on top of whatever ground is under it
 //     (World.groundHeight, probed a little ahead so it rises before a step
-//     edge instead of clipping it). The hip rides at the flat pose's height
-//     above the average of the two feet's ground levels, lowered if needed so
-//     every planted leg can still reach its foot.
-//  3. the legs are then solved by two-bone IK from that hip to those feet
-//     (knees bent to the same side the clip bends them); torso, head and arms
-//     keep the clip's own angles.
-// step() reports when this can't go on: the swing foot touched down with no
+//     edge instead of clipping it). Each group's root rides at the flat
+//     pose's height above the average ground level of its own feet, lowered
+//     if needed so each of its legs can still reach its foot. With two
+//     groups, the upper body (everything but the legs) pitches so both roots
+//     get their own height -- a horse's front end rises first stepping up.
+//  3. the legs are then solved by two-bone IK from their roots to their feet
+//     (knees bent to the same side the clip bends them); the upper body keeps
+//     the clip's own angles (plus that pitch).
+// step() reports when this can't go on: a swing foot touched down with no
 // ground in reach (STEPPED_INTO_AIR -- a drop bigger than MAX_STEP_DOWN), or
 // the way ahead is blocked (BLOCKED -- ground rising more than MAX_STEP_UP
 // within WALL_LOOKAHEAD, i.e. steeper than ~27 degrees, or the upper body
@@ -51,18 +59,18 @@ public class ClipPlayer {
     private static final double FOOT_GROUND_LOOKAHEAD = 0.15; // swing foot rises before a step edge
     private static final double FOOT_GROUND_SMOOTHING_SECONDS = 0.03;
     private static final double LIFT_EPSILON = 1e-3; // flat-pose foot height counting as "lifted"
-    private static final double REACH = 0.995; // max leg extension, fraction of thigh+shin
-    private static final double OFFSET_DECAY_SECONDS = 0.1; // see hipOffsetX / Leg.swingOffsetX
-    private static final double HIP_RISE_SMOOTHING_SECONDS = 0.04;
+    private static final double REACH = 0.995; // max leg extension, fraction of upper+lower
+    private static final double OFFSET_DECAY_SECONDS = 0.1; // see offsetX / Leg.swingOffsetX
+    private static final double ROOT_RISE_SMOOTHING_SECONDS = 0.04;
+    private static final double MAX_PITCH_DEG = 30.0; // two-group upper-body tilt, either way
 
     public enum Status { WALKING, STEPPED_INTO_AIR, BLOCKED }
 
-    // one leg: thigh tips[0] at the hip, shin tips[1] the foot.
+    // one leg: upper tips[0] at its root (hip/shoulder), lower tips[1] the foot.
     private static class Leg {
-        final String thighName;
-        final String shinName;
-        Bone thigh;
-        Bone shin;
+        final Bone upper;
+        final Bone lower;
+        Group group;
         boolean planted;
         TupleD plantedPosition;
         double groundY; // ground level under this foot (smoothed while swinging)
@@ -70,37 +78,47 @@ public class ClipPlayer {
         double swingOffsetX; // see step(): decays to 0 over the swing
         TupleD previousPosition;
 
-        Leg(String thighName, String shinName) {
-            this.thighName = thighName;
-            this.shinName = shinName;
+        Leg(Bone upper, Bone lower) {
+            this.upper = upper;
+            this.lower = lower;
+        }
+
+        Tip root() {
+            return upper.tips[0];
         }
 
         Tip foot() {
-            return shin.tips[1];
+            return lower.tips[1];
         }
     }
 
+    // legs hanging from the same body point; the per-step fields are scratch.
+    private static class Group {
+        final List<Leg> legs = new ArrayList<>();
+        TupleD previousRoot; // where the root ended up last step
+        TupleD rootFlat;
+        TupleD root;
+        double height;
+    }
+
     private final World world;
-    private final Leg[] legs;
+    private final List<Leg> legs = new ArrayList<>();
+    private final List<Group> groups = new ArrayList<>();
+    private final Set<Bone> legBones = new HashSet<>();
 
     private AnimationClip clip;
     private double time;
     private double elapsed;
     private Map<String, Double> startAnglesDeg;
     private Leg stance;
-    private double hipOffsetX; // keeps the hip continuous if a weight switch would jump it
-    private TupleD previousHip;
     private Leg previousStance;
-    private TupleD hipVelocity = new TupleD(0, 0);
+    private double offsetX; // keeps the stance root continuous if a weight switch would jump it
+    private TupleD previousBodyRoot;
+    private TupleD rootVelocity = new TupleD(0, 0);
 
     // -------------------------------------------------------------------------
-    // legBoneNames: {thigh, shin} per leg, e.g. {{"thighL","shinL"},{"thighR","shinR"}}.
-    public ClipPlayer(World world, String[][] legBoneNames) {
+    public ClipPlayer(World world) {
         this.world = world;
-        legs = new Leg[legBoneNames.length];
-        for (int i = 0; i < legs.length; i++) {
-            legs[i] = new Leg(legBoneNames[i][0], legBoneNames[i][1]);
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -109,9 +127,28 @@ public class ClipPlayer {
     }
 
     // -------------------------------------------------------------------------
+    // a good point to start `clip` from, given how body stands right now: the
+    // footfall whose foot is currently the furthest ahead in the walking
+    // direction -- starting on another would pin a REAR foot as if it had
+    // just stepped out in front and drag the whole body back while blending in.
+    public static double startTimeFor(AnimationClip clip, Body body) {
+        double dir = clip.direction != 0.0 ? Math.signum(clip.direction) : -1.0;
+        double best = 0.0;
+        double bestAhead = Double.NEGATIVE_INFINITY;
+        for (AnimationClip.Key k : clip.footfalls()) {
+            Tip foot = body.tipByName.get(k.stance);
+            if (foot != null && dir * foot.position.first > bestAhead + 1e-9) {
+                bestAhead = dir * foot.position.first;
+                best = k.t;
+            }
+        }
+        return best;
+    }
+
+    // -------------------------------------------------------------------------
     // begins playing `clip` from startTime (seconds into it), blending in
-    // from body's current pose. Both feet stay planted where they are until
-    // the clip lifts them.
+    // from body's current pose. Every foot stays planted where it is until
+    // the clip lifts it.
     public void start(AnimationClip clip, Body body, double startTime) {
         this.clip = clip;
         this.time = startTime;
@@ -120,21 +157,46 @@ public class ClipPlayer {
         for (Bone b : body.bone) {
             startAnglesDeg.put(b.name, Math.toDegrees(b.angle()));
         }
-        for (Leg leg : legs) {
-            leg.thigh = findBone(body, leg.thighName);
-            leg.shin = findBone(body, leg.shinName);
+        legs.clear();
+        groups.clear();
+        legBones.clear();
+        Map<Tip, Group> groupByAttachment = new HashMap<>();
+        for (String[] names : clip.legs) {
+            Leg leg = new Leg(findBone(body, names[0]), findBone(body, names[1]));
             leg.planted = true;
-            leg.plantedPosition = leg.foot().position;
+            // seated on the ground under it -- as far down as the leg itself
+            // reaches, or a step up (e.g. a figure that just turned around on
+            // uneven ground, its feet now mirrored onto the wrong levels) -- or
+            // left where it is if there's none
+            TupleD foot = leg.foot().position;
+            double ground = world.groundHeight(foot.first, foot.second + MAX_STEP_UP,
+                    foot.second - (leg.upper.length + leg.lower.length));
+            leg.plantedPosition = Double.isNaN(ground) ? foot : new TupleD(foot.first, ground);
             leg.groundY = leg.plantedPosition.second;
             leg.groundFound = true;
             leg.swingOffsetX = 0.0;
             leg.previousPosition = leg.plantedPosition;
+            legs.add(leg);
+            legBones.add(leg.upper);
+            legBones.add(leg.lower);
+        }
+        for (Leg leg : legs) {
+            Tip attachment = attachmentOf(body, leg.root());
+            Group g = groupByAttachment.get(attachment);
+            if (g == null) {
+                g = new Group();
+                g.previousRoot = leg.root().position;
+                groups.add(g);
+                groupByAttachment.put(attachment, g);
+            }
+            g.legs.add(leg);
+            leg.group = g;
         }
         stance = legFor(clip.stanceAt(startTime));
-        hipOffsetX = 0.0;
-        previousHip = null;
-        hipVelocity = new TupleD(0, 0);
         previousStance = stance;
+        offsetX = 0.0;
+        previousBodyRoot = null;
+        rootVelocity = new TupleD(0, 0);
     }
 
     // -------------------------------------------------------------------------
@@ -146,7 +208,7 @@ public class ClipPlayer {
     // how fast the walk is carrying the body right now -- e.g. for handing
     // over to physics mid-stride with the momentum a real step would have.
     public TupleD hipVelocity() {
-        return hipVelocity;
+        return rootVelocity;
     }
 
     // -------------------------------------------------------------------------
@@ -186,36 +248,46 @@ public class ClipPlayer {
         Tip stanceFoot = stance.foot();
         stanceFoot.position = new TupleD(0.0, 0.0);
         body.propagatePositions(stanceFoot);
-        TupleD hipFlat = stance.thigh.tips[0].position;
+        for (Group g : groups) {
+            g.rootFlat = g.legs.get(0).root().position;
+        }
         Map<Leg, TupleD> footFlat = new HashMap<>();
         Map<Leg, Double> bendSign = new HashMap<>();
         for (Leg leg : legs) {
             TupleD foot = leg.foot().position;
-            TupleD knee = leg.thigh.tips[1].position;
+            TupleD knee = leg.upper.tips[1].position;
             footFlat.put(leg, foot);
-            TupleD toFoot = foot.sub(hipFlat);
-            TupleD toKnee = knee.sub(hipFlat);
+            TupleD toFoot = foot.sub(leg.group.rootFlat);
+            TupleD toKnee = knee.sub(leg.group.rootFlat);
             bendSign.put(leg, Math.signum(toFoot.first * toKnee.second - toFoot.second * toKnee.first));
         }
 
-        // 2. terrain: hip x from the planted stance foot, feet on the ground
-        double hipX = stance.plantedPosition.first + hipFlat.first + hipOffsetX;
-        if (previousHip != null && stance != previousStance) {
-            // weight just switched: keep the hip where it was, and let the
+        // 2. terrain: the stance root's x from the planted stance foot
+        Group stanceGroup = stance.group;
+        double rootX = stance.plantedPosition.first + stanceGroup.rootFlat.first + offsetX;
+        if (stance != previousStance && stanceGroup.previousRoot != null) {
+            // weight just switched: keep that root where it was, and let the
             // difference fade out (0 in steady walking; only a start from a
             // pose the clip doesn't quite match leaves one)
-            hipOffsetX += previousHip.first - hipX;
-            hipX = previousHip.first;
+            offsetX += stanceGroup.previousRoot.first - rootX;
+            rootX = stanceGroup.previousRoot.first;
         }
-        hipOffsetX *= Math.exp(-STEP_DT / OFFSET_DECAY_SECONDS);
+        offsetX *= Math.exp(-STEP_DT / OFFSET_DECAY_SECONDS);
         previousStance = stance;
+        for (Group g : groups) {
+            g.root = new TupleD(rootX + g.rootFlat.first - stanceGroup.rootFlat.first, 0.0); // x only, for now
+        }
 
         Status status = Status.WALKING;
         Map<Leg, TupleD> footTarget = new HashMap<>();
+        Set<String> contacts = clip.contactsAt(time);
         for (Leg leg : legs) {
             double flatLift = footFlat.get(leg).second; // height above the flat floor
-            double flatX = hipX + footFlat.get(leg).first - hipFlat.first;
-            if (leg.planted && leg != stance && flatLift > LIFT_EPSILON) {
+            double flatX = leg.group.root.first + footFlat.get(leg).first - leg.group.rootFlat.first;
+            // the clip says when each foot leaves the ground; without that,
+            // guess from the flat pose (spline error can fake an early lift)
+            boolean lifted = contacts != null ? !contacts.contains(leg.foot().name) : flatLift > LIFT_EPSILON;
+            if (leg.planted && leg != stance && lifted) {
                 // lift-off: from here on it follows the flat path, starting
                 // from where it actually was (only differs after a blend-in)
                 leg.planted = false;
@@ -251,45 +323,94 @@ public class ClipPlayer {
             footTarget.put(leg, new TupleD(x, leg.groundY + Math.max(0.0, flatLift)));
         }
 
-        double otherGround = stance.groundY;
-        for (Leg leg : legs) {
-            if (leg != stance) {
-                otherGround = leg.planted ? leg.plantedPosition.second : leg.groundY;
+        // each group's root height: the flat height above its feet's average
+        // ground -- low enough for each of its legs to reach (the swing foot
+        // too, so a root is already down when its foot lands on lower
+        // ground); rising is eased (e.g. when a wide starting stance stops
+        // holding a root down the moment its rear foot lifts), lowering
+        // never is -- the feet must stay reachable
+        for (Group g : groups) {
+            double ground = 0.0;
+            for (Leg leg : g.legs) {
+                ground += leg.planted ? leg.plantedPosition.second : leg.groundY;
             }
-        }
-        double hipY = 0.5 * (stance.plantedPosition.second + otherGround) + hipFlat.second;
-        // low enough for every leg to reach its foot -- the swing foot too, so
-        // the hip is already down when it touches down on lower ground
-        for (Leg leg : legs) {
-            TupleD target = footTarget.get(leg);
-            double reach = REACH * (leg.thigh.length + leg.shin.length);
-            double dx = target.first - hipX;
-            if (Math.abs(dx) < reach) {
-                hipY = Math.min(hipY, target.second + Math.sqrt(reach * reach - dx * dx));
+            double h = ground / g.legs.size() + g.rootFlat.second;
+            for (Leg leg : g.legs) {
+                TupleD target = footTarget.get(leg);
+                double reach = REACH * (leg.upper.length + leg.lower.length);
+                double dx = target.first - g.root.first;
+                if (Math.abs(dx) < reach) {
+                    h = Math.min(h, target.second + Math.sqrt(reach * reach - dx * dx));
+                }
             }
+            if (g.previousRoot != null && h > g.previousRoot.second) {
+                h = g.previousRoot.second + (h - g.previousRoot.second) * (1.0 - Math.exp(-STEP_DT / ROOT_RISE_SMOOTHING_SECONDS));
+            }
+            g.height = h;
         }
-        // rising is eased (e.g. when a wide starting stance stops holding the
-        // hip down the moment its rear foot lifts); lowering never is -- the
-        // feet must stay reachable
-        if (previousHip != null && hipY > previousHip.second) {
-            hipY = previousHip.second + (hipY - previousHip.second) * (1.0 - Math.exp(-STEP_DT / HIP_RISE_SMOOTHING_SECONDS));
-        }
-        TupleD hip = new TupleD(hipX, hipY);
 
-        // 3. legs by IK, then everything else from the hip
-        for (Leg leg : legs) {
-            solveLeg(leg, hip, footTarget.get(leg), bendSign.get(leg));
+        // place the roots: the stance group's at its height; with exactly two
+        // groups the upper body pitches about it so the other root gets its
+        // own height (lowering both if the pitch limit keeps it too high);
+        // any further groups just ride along rigidly.
+        TupleD stanceRoot = new TupleD(rootX, stanceGroup.height);
+        double pitch = 0.0;
+        Group other = groups.size() == 2 ? (groups.get(0) == stanceGroup ? groups.get(1) : groups.get(0)) : null;
+        if (other != null) {
+            TupleD v = other.rootFlat.sub(stanceGroup.rootFlat);
+            double length = v.length();
+            if (length > 1e-9) {
+                double s = Math.max(-1.0, Math.min(1.0, (other.height - stanceGroup.height) / length));
+                double theta = Math.atan2(v.second, v.first);
+                double p1 = normalizeRad(Math.asin(s) - theta);
+                double p2 = normalizeRad(Math.PI - Math.asin(s) - theta);
+                pitch = Math.abs(p1) < Math.abs(p2) ? p1 : p2;
+                double maxPitch = Math.toRadians(MAX_PITCH_DEG);
+                pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
+                TupleD rotated = rotate(v, pitch);
+                double excess = stanceRoot.second + rotated.second - other.height;
+                if (excess > 0.0) {
+                    stanceRoot = new TupleD(stanceRoot.first, stanceRoot.second - excess);
+                }
+            }
         }
-        Tip hipTip = stance.thigh.tips[0];
-        hipTip.position = hip;
-        body.propagatePositions(hipTip);
+        for (Group g : groups) {
+            g.root = stanceRoot.add(rotate(g.rootFlat.sub(stanceGroup.rootFlat), pitch));
+        }
+        // swing feet follow their own (now pitched) root horizontally
+        for (Leg leg : legs) {
+            if (!leg.planted) {
+                double x = leg.group.root.first + footFlat.get(leg).first - leg.group.rootFlat.first + leg.swingOffsetX;
+                footTarget.put(leg, new TupleD(x, footTarget.get(leg).second));
+            }
+        }
+
+        // 3. upper body (with its pitch) and legs by IK, then everything
+        // else from the stance root
+        if (pitch != 0.0) {
+            for (Bone b : body.bone) {
+                if (!legBones.contains(b)) {
+                    b.angleDeg += Math.toDegrees(pitch);
+                }
+            }
+        }
+        for (Leg leg : legs) {
+            solveLeg(leg, leg.group.root, footTarget.get(leg), bendSign.get(leg));
+        }
+        Tip rootTip = stance.root();
+        rootTip.position = stanceRoot;
+        body.propagatePositions(rootTip);
+        for (Group g : groups) {
+            g.previousRoot = g.legs.get(0).root().position;
+        }
         for (Leg leg : legs) {
             leg.previousPosition = leg.foot().position;
         }
-        double hipDx = previousHip == null ? 0.0 : hipX - previousHip.first;
-        hipVelocity = previousHip == null ? new TupleD(0, 0) : hip.sub(previousHip).times(1.0 / STEP_DT);
-        previousHip = hip;
-        double walkDir = clip.direction != 0.0 ? Math.signum(clip.direction) : Math.signum(hipDx);
+        TupleD bodyRoot = body.bone[0].tips[0].position;
+        double bodyRootDx = previousBodyRoot == null ? 0.0 : bodyRoot.first - previousBodyRoot.first;
+        rootVelocity = previousBodyRoot == null ? new TupleD(0, 0) : bodyRoot.sub(previousBodyRoot).times(1.0 / STEP_DT);
+        previousBodyRoot = bodyRoot;
+        double walkDir = clip.direction != 0.0 ? Math.signum(clip.direction) : Math.signum(bodyRootDx);
         if (status == Status.WALKING && upperBodyWalkingIntoRock(body, walkDir)) {
             status = Status.BLOCKED;
         }
@@ -322,22 +443,22 @@ public class ClipPlayer {
     }
 
     // -------------------------------------------------------------------------
-    // two-bone IK: sets the thigh/shin angles so the foot reaches `target`
-    // from `hip` (or points straight at it, fully extended, if out of reach),
-    // knee on the side given by bendSign (+1 counter-clockwise of hip->foot).
-    private static void solveLeg(Leg leg, TupleD hip, TupleD target, double bendSign) {
-        double a = leg.thigh.length;
-        double b = leg.shin.length;
-        TupleD d = target.sub(hip);
+    // two-bone IK: sets the upper/lower angles so the foot reaches `target`
+    // from `root` (or points straight at it, fully extended, if out of reach),
+    // knee on the side given by bendSign (+1 counter-clockwise of root->foot).
+    private static void solveLeg(Leg leg, TupleD root, TupleD target, double bendSign) {
+        double a = leg.upper.length;
+        double b = leg.lower.length;
+        TupleD d = target.sub(root);
         double dist = Math.max(1e-9, Math.min(Math.hypot(d.first, d.second), a + b - 1e-9));
         double toFoot = Math.atan2(d.second, d.first);
         double cosA = (a * a + dist * dist - b * b) / (2.0 * a * dist);
-        double hipAngle = Math.acos(Math.max(-1.0, Math.min(1.0, cosA)));
-        double thighAngle = toFoot + (bendSign >= 0.0 ? hipAngle : -hipAngle);
-        TupleD knee = hip.add(new TupleD(a * Math.cos(thighAngle), a * Math.sin(thighAngle)));
-        TupleD foot = hip.add(new TupleD(dist * Math.cos(toFoot), dist * Math.sin(toFoot)));
-        leg.thigh.angleDeg = Math.toDegrees(thighAngle);
-        leg.shin.angleDeg = Math.toDegrees(Math.atan2(foot.second - knee.second, foot.first - knee.first));
+        double rootAngle = Math.acos(Math.max(-1.0, Math.min(1.0, cosA)));
+        double upperAngle = toFoot + (bendSign >= 0.0 ? rootAngle : -rootAngle);
+        TupleD knee = root.add(new TupleD(a * Math.cos(upperAngle), a * Math.sin(upperAngle)));
+        TupleD foot = root.add(new TupleD(dist * Math.cos(toFoot), dist * Math.sin(toFoot)));
+        leg.upper.angleDeg = Math.toDegrees(upperAngle);
+        leg.lower.angleDeg = Math.toDegrees(Math.atan2(foot.second - knee.second, foot.first - knee.first));
     }
 
     // -------------------------------------------------------------------------
@@ -348,11 +469,6 @@ public class ClipPlayer {
     private boolean upperBodyWalkingIntoRock(Body body, double dir) {
         if (dir == 0.0) {
             return false;
-        }
-        Set<Bone> legBones = new HashSet<>();
-        for (Leg leg : legs) {
-            legBones.add(leg.thigh);
-            legBones.add(leg.shin);
         }
         for (Bone b : body.bone) {
             if (legBones.contains(b)) {
@@ -369,6 +485,21 @@ public class ClipPlayer {
     }
 
     // -------------------------------------------------------------------------
+    // the body tip a leg's root is jointed to (e.g. torso_hip for a thigh) --
+    // legs sharing one move as a group. Falls back to the root itself for a
+    // leg jointed to nothing but other legs.
+    private Tip attachmentOf(Body body, Tip legRoot) {
+        for (Joint j : body.joints) {
+            for (int i = 0; i < 2; i++) {
+                if (j.tips[i] == legRoot && !legBones.contains(j.tips[1 - i].bone)) {
+                    return j.tips[1 - i];
+                }
+            }
+        }
+        return legRoot;
+    }
+
+    // -------------------------------------------------------------------------
     private Leg legFor(String footTipName) {
         for (Leg leg : legs) {
             if (leg.foot().name.equals(footTipName)) {
@@ -376,6 +507,24 @@ public class ClipPlayer {
             }
         }
         throw new IllegalArgumentException("no leg ends in foot tip " + footTipName);
+    }
+
+    // -------------------------------------------------------------------------
+    private static TupleD rotate(TupleD v, double angleRad) {
+        double c = Math.cos(angleRad);
+        double s = Math.sin(angleRad);
+        return new TupleD(v.first * c - v.second * s, v.first * s + v.second * c);
+    }
+
+    // -------------------------------------------------------------------------
+    private static double normalizeRad(double a) {
+        double r = a % (2.0 * Math.PI);
+        if (r <= -Math.PI) {
+            r += 2.0 * Math.PI;
+        } else if (r > Math.PI) {
+            r -= 2.0 * Math.PI;
+        }
+        return r;
     }
 
     // -------------------------------------------------------------------------

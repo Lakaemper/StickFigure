@@ -20,6 +20,12 @@ public class Motor extends Attachable {
     public Joint joint;
 
     public boolean enabled = true;
+    // true: realize the torque as a proper force couple on each bone (the
+    // far-tip force plus its opposite at the joint tip), so the motor adds no
+    // net force to the body. false (the original, which the human's tuning is
+    // built on): the far-tip force alone -- that also pushes the whole body
+    // around a little, which a heavy four-legged body can't stand up against.
+    public boolean balanced = false;
     public double targetAngleDeg;
     public double stiffness;  // kp
     public double damping;    // kd
@@ -53,15 +59,16 @@ public class Motor extends Attachable {
         double torque = stiffness * error - damping * relAngVel;
         torque = Math.max(-maxTorque, Math.min(maxTorque, torque));
 
-        applyTorqueAtFarTip(jointTip1, farTip1, torque, dt);
-        applyTorqueAtFarTip(jointTip0, farTip0, -torque, dt);
+        applyTorqueAtFarTip(jointTip1, farTip1, torque, dt, balanced);
+        applyTorqueAtFarTip(jointTip0, farTip0, -torque, dt, balanced);
     }
 
     // -------------------------------------------------------------------------
     // Realizes `torque` about jointTip as a single force at farTip, perpendicular
     // to the (jointTip -> farTip) lever arm, magnitude torque/leverLength -- the
     // standard way to turn a torque into a point force with no rotational body.
-    private static void applyTorqueAtFarTip(Tip jointTip, Tip farTip, double torque, double dt) {
+    // balanced: plus the opposite force at jointTip (see Motor.balanced).
+    private static void applyTorqueAtFarTip(Tip jointTip, Tip farTip, double torque, double dt, boolean balanced) {
         TupleD lever = farTip.position.sub(jointTip.position);
         double leverLength = lever.length();
         if (leverLength == 0.0) {
@@ -71,6 +78,9 @@ public class Motor extends Attachable {
         TupleD perpendicular = new TupleD(-u.second, u.first);
         TupleD force = perpendicular.times(torque / leverLength);
         farTip.applyForce(force, dt);
+        if (balanced) {
+            jointTip.applyForce(force.times(-1.0), dt);
+        }
     }
 
     // -------------------------------------------------------------------------

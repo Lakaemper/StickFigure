@@ -105,7 +105,10 @@ public class World {
             return;
         }
         for (Tip tip : body.frictionPads.keySet()) {
-            if (tip.position.second <= 0.0) {
+            // at floor level but inside a rock (e.g. under a slab's edge):
+            // not floor contact -- the rock's own contact below pushes it out
+            // onto the rock, rather than it getting pinned inside there
+            if (tip.position.second <= 0.0 && !insideObstacle(tip.position)) {
                 tip.position = new TupleD(tip.position.first, 0.0);
                 body.addAnchor(tip.name, false);
                 continue;

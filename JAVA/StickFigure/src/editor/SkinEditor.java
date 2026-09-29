@@ -389,7 +389,32 @@ public class SkinEditor extends JFrame {
         if (!file.getName().contains(".")) {
             file = new File(file.getPath() + ".json");
         }
+        // never over a skeleton/pose (or anything else that isn't a skin) --
+        // e.g. the very skeleton file this skin was drawn on
+        if (file.isFile() && !isSkinFile(file)) {
+            JOptionPane.showMessageDialog(this, file.getName() + " is not a skin file (it's probably a skeleton or pose)"
+                    + " -- choose another name, e.g. " + suggestedSkinName() + ".");
+            return;
+        }
         saveSkinTo(file);
+    }
+
+    // -------------------------------------------------------------------------
+    @SuppressWarnings("unchecked")
+    private static boolean isSkinFile(File file) {
+        try {
+            Object root = Json.parse(Files.readString(file.toPath()));
+            return root instanceof Map && "Skin".equals(((Map<String, Object>) root).get("Type"));
+        } catch (IOException | RuntimeException ex) {
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // e.g. Horse_Initial.json -> Horse_Skin_initial.json
+    private String suggestedSkinName() {
+        String base = skeletonFile != null ? skeletonFile.getName().replaceFirst("\\.json$", "") : "Skin";
+        return base.replaceFirst("Initial$", "Skin_initial") + (base.endsWith("Initial") ? ".json" : "_Skin.json");
     }
 
     // -------------------------------------------------------------------------

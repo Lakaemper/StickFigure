@@ -3,6 +3,8 @@ package editor;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import skeleton.Body;
 import skeleton.Bone;
@@ -28,7 +30,7 @@ public class WalkCycleGenerator {
     private static final String OUTPUT_PATH = "src/assets/Anim_Walk_L.json";
 
     private static final double CYCLE_SECONDS = 0.8; // two steps
-    private static final int KEYS = 32;
+    private static final int KEYS = 40; // lift-offs (STANCE_FRACTION) and footfalls land exactly on keys
     private static final double STEP_LENGTH = 0.45; // world units per step -> 1.125 units/s at this cycle time
     private static final double STANCE_FRACTION = 0.6; // of each leg's cycle, foot on the ground
     private static final double SWING_LIFT = 0.08; // max foot clearance mid-swing
@@ -53,6 +55,7 @@ public class WalkCycleGenerator {
 
         StringBuilder sb = new StringBuilder();
         sb.append("{\n  \"Type\": \"Animation\",\n  \"Name\": \"Walk_L\",\n  \"Direction\": -1,\n"); // walks toward -x
+        sb.append("  \"Legs\": [[\"thighL\", \"shinL\"], [\"thighR\", \"shinR\"]],\n"); // solved by IK in ClipPlayer
         sb.append(String.format(Locale.ROOT, "  \"Duration\": %.4f,\n  \"Loop\": true,\n  \"Keys\": [\n", CYCLE_SECONDS));
         for (int k = 0; k < KEYS; k++) {
             double phase = (double) k / KEYS;
@@ -77,8 +80,17 @@ public class WalkCycleGenerator {
             // left foot carries the weight from its own heel strike (phase 0)
             // to the right foot's (phase 0.5)
             String stance = phase < 0.5 ? "shinL_foot" : "shinR_foot";
+            // feet on the ground from this key on (a foot lifts at STANCE_FRACTION)
+            List<String> contacts = new ArrayList<>();
+            if (pL < STANCE_FRACTION - 1e-9) {
+                contacts.add("\"shinL_foot\"");
+            }
+            if (pR < STANCE_FRACTION - 1e-9) {
+                contacts.add("\"shinR_foot\"");
+            }
 
-            sb.append(String.format(Locale.ROOT, "    {\"T\": %.4f, \"Stance\": \"%s\", \"HipHeight\": %.4f, \"Angles\": {", phase * CYCLE_SECONDS, stance, hipY));
+            sb.append(String.format(Locale.ROOT, "    {\"T\": %.4f, \"Stance\": \"%s\", \"Contacts\": [%s], \"HipHeight\": %.4f, \"Angles\": {",
+                    phase * CYCLE_SECONDS, stance, String.join(", ", contacts), hipY));
             sb.append(String.format(Locale.ROOT,
                     "\"torso\": %.3f, \"head\": %.3f, \"upperArmL\": %.3f, \"foreArmL\": %.3f, \"upperArmR\": %.3f, \"foreArmR\": %.3f, "
                     + "\"thighL\": %.3f, \"shinL\": %.3f, \"thighR\": %.3f, \"shinR\": %.3f}}",

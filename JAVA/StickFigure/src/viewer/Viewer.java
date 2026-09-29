@@ -22,17 +22,21 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.imageio.ImageIO;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JSlider;
 import javax.swing.Timer;
 import utils.TupleD;
@@ -118,6 +122,17 @@ public class Viewer extends JFrame {
     public Runnable onWalkLeft;
     public Runnable onWalkRight;
     public Runnable onWalkKeyReleased;
+
+    // 'h': switch the playable figure (see main.CharacterProfile).
+    public Runnable onToggleCharacter;
+
+    // character selector, at the bottom of the control column: Main supplies
+    // the names (setCharacterChoices); picking one -- even the one already
+    // selected, as a way to start over -- fires onSelectCharacter with its name.
+    public Consumer<String> onSelectCharacter;
+    private final JPanel characterPanel = new JPanel();
+    private final ButtonGroup characterGroup = new ButtonGroup();
+    private final Map<String, JRadioButton> characterButtons = new LinkedHashMap<>();
 
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
@@ -252,6 +267,8 @@ public class Viewer extends JFrame {
                     onWalkLeft.run();
                 } else if (e.getKeyCode() == KeyEvent.VK_I && onWalkRight != null) {
                     onWalkRight.run();
+                } else if (e.getKeyCode() == KeyEvent.VK_H && onToggleCharacter != null) {
+                    onToggleCharacter.run();
                 }
             }
 
@@ -433,9 +450,50 @@ public class Viewer extends JFrame {
         controls.add(morphTimeSlider);
         controls.add(Box.createVerticalStrut(12));
         controls.add(jumpButton);
+        controls.add(Box.createVerticalStrut(12));
+        JLabel characterLabel = new JLabel("Character");
+        characterLabel.setAlignmentX(LEFT_ALIGNMENT);
+        characterPanel.setLayout(new BoxLayout(characterPanel, BoxLayout.Y_AXIS));
+        characterPanel.setAlignmentX(LEFT_ALIGNMENT);
+        controls.add(characterLabel);
+        controls.add(characterPanel);
         return controls;
     }
 
+    // (re)fills the character selector with one radio button per name,
+    // `selected` checked. The buttons never take keyboard focus, so the draw
+    // panel keeps getting u/i/o/p/h right after a switch.
+    public void setCharacterChoices(List<String> names, String selected) {
+        characterPanel.removeAll();
+        characterButtons.clear();
+        for (String name : names) {
+            JRadioButton button = new JRadioButton(name, name.equals(selected));
+            button.setFocusable(false);
+            button.addActionListener(e -> {
+                if (onSelectCharacter != null) {
+                    onSelectCharacter.accept(name);
+                }
+                panel.requestFocusInWindow();
+            });
+            characterGroup.add(button);
+            characterButtons.put(name, button);
+            characterPanel.add(button);
+        }
+        characterPanel.revalidate();
+        characterPanel.repaint();
+    }
+
+    // -------------------------------------------------------------------------
+    // checks `name` in the selector without firing onSelectCharacter -- e.g.
+    // when the figure was switched some other way (the 'h' key).
+    public void setSelectedCharacter(String name) {
+        JRadioButton button = characterButtons.get(name);
+        if (button != null) {
+            button.setSelected(true);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // the morph duration currently selected on the slider, in seconds.
     public double getMorphTimeSeconds() {
         return morphTimeSlider.getValue() / 100.0;
