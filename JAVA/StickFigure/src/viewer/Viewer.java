@@ -1,11 +1,17 @@
 package viewer;
 
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Paint;
+import java.awt.TexturePaint;
+import java.awt.geom.Path2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -63,6 +69,9 @@ public class Viewer extends JFrame {
     // has scrolled, via a modulo offset (see DrawPanel.paintComponent).
     private BufferedImage backgroundImage;
     private static final double BACKGROUND_PARALLAX_FACTOR = 0.25;
+    // opacity the backdrop is drawn with (1 = fully opaque) -- faded so it
+    // reads as scenery and doesn't compete with the figure and rocks.
+    private static final float BACKGROUND_ALPHA = 0.5f;
 
     // the world point that always renders at screen center -- e.g. Main sets
     // this to the figure's own neck tip every frame, turning the viewer into
@@ -103,6 +112,12 @@ public class Viewer extends JFrame {
     public Runnable onJumpLeft;
     public Runnable onJumpRight;
     public Runnable onJumpKeyReleased;
+
+    // keyboard walking -- 'u' walk left / 'i' walk right, held to keep
+    // walking: fired on press, onWalkKeyReleased when either comes back up.
+    public Runnable onWalkLeft;
+    public Runnable onWalkRight;
+    public Runnable onWalkKeyReleased;
 
     // mouse-drag hooks, given world-space points -- Viewer only knows about
     // screen<->world conversion, not about Body/Tip; whoever wires these up
@@ -156,13 +171,27 @@ public class Viewer extends JFrame {
         }
     }
 
+    // a flat polygon (texture == null: vertices in world coords, filled with
+    // color) or a textured one (vertices in a local frame given by origin +
+    // angleRad, filled with texture laid out in that same frame). One class,
+    // one list, so flat and textured polygons keep their draw order.
     private static class Poly {
         TupleD[] vertices;
         Color color;
+        BufferedImage texture;
+        TupleD origin;
+        double angleRad;
 
         Poly(TupleD[] vertices, Color color) {
             this.vertices = vertices;
             this.color = color;
+        }
+
+        Poly(TupleD[] localVertices, TupleD origin, double angleRad, BufferedImage texture) {
+            this.vertices = localVertices;
+            this.origin = origin;
+            this.angleRad = angleRad;
+            this.texture = texture;
         }
     }
 
@@ -219,6 +248,10 @@ public class Viewer extends JFrame {
                     onJumpLeft.run();
                 } else if (e.getKeyCode() == KeyEvent.VK_P && onJumpRight != null) {
                     onJumpRight.run();
+                } else if (e.getKeyCode() == KeyEvent.VK_U && onWalkLeft != null) {
+                    onWalkLeft.run();
+                } else if (e.getKeyCode() == KeyEvent.VK_I && onWalkRight != null) {
+                    onWalkRight.run();
                 }
             }
 
@@ -227,6 +260,9 @@ public class Viewer extends JFrame {
                 if ((e.getKeyCode() == KeyEvent.VK_O || e.getKeyCode() == KeyEvent.VK_P)
                         && onJumpKeyReleased != null) {
                     onJumpKeyReleased.run();
+                } else if ((e.getKeyCode() == KeyEvent.VK_U || e.getKeyCode() == KeyEvent.VK_I)
+                        && onWalkKeyReleased != null) {
+                    onWalkKeyReleased.run();
                 }
             }
         });
@@ -474,6 +510,17 @@ public class Viewer extends JFrame {
         panel.repaint();
     }
 
+    // a polygon filled with a texture, both defined in a local frame: origin
+    // (world coords) with its x-axis at angleRad -- e.g. a bone's own frame
+    // (see Bone.localToWorld), so the texture moves and rotates with it. Tile
+    // origin at the frame origin, image upright when the frame points right,
+    // one image pixel per screen pixel (tiles repeat if the polygon is
+    // larger) -- the same layout editor.SkinEditor previews.
+    public void drawTexturedPolygon(TupleD[] localVertices, TupleD origin, double angleRad, BufferedImage texture) {
+        polys.add(new Poly(localVertices, origin, angleRad, texture));
+        panel.repaint();
+    }
+
     public void clear() {
         lines.clear();
         circles.clear();
@@ -491,6 +538,33 @@ public class Viewer extends JFrame {
     }
 
     private class DrawPanel extends JPanel {
+
+        // fills p (a textured Poly) in its own local frame. Drawn in a y-down
+        // copy of that frame (local y negated) so the image isn't mirrored:
+        // screen = frameOrigin + rotate(-angle) * SCALE * (x, -y), with the
+        // texture tiled at image-pixels / SCALE world units per tile.
+        private void fillTexturedPolygon(Graphics2D g2, Poly p, int cx, int cy) {
+            Path2D.Double path = new Path2D.Double();
+            for (int i = 0; i < p.vertices.length; i++) {
+                if (i == 0) {
+                    path.moveTo(p.vertices[i].first, -p.vertices[i].second);
+                } else {
+                    path.lineTo(p.vertices[i].first, -p.vertices[i].second);
+                }
+            }
+            path.closePath();
+
+            AffineTransform savedTransform = g2.getTransform();
+            Paint savedPaint = g2.getPaint();
+            g2.translate(cx + p.origin.first * SCALE, cy - p.origin.second * SCALE);
+            g2.rotate(-p.angleRad);
+            g2.scale(SCALE, SCALE);
+            g2.setPaint(new TexturePaint(p.texture, new Rectangle2D.Double(0, 0,
+                    p.texture.getWidth() / SCALE, p.texture.getHeight() / SCALE)));
+            g2.fill(path);
+            g2.setPaint(savedPaint);
+            g2.setTransform(savedTransform);
+        }
 
         @Override
         protected void paintComponent(Graphics g) {
@@ -522,11 +596,14 @@ public class Viewer extends JFrame {
                 int shiftY = (int) Math.round(cameraFocus.second * SCALE * BACKGROUND_PARALLAX_FACTOR);
                 int startX = ((shiftX % imgW) + imgW) % imgW - imgW;
                 int startY = ((shiftY % imgH) + imgH) % imgH - imgH;
+                Composite oldComposite = g2.getComposite();
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, BACKGROUND_ALPHA));
                 for (int x = startX; x < getWidth(); x += imgW) {
                     for (int y = startY; y < getHeight(); y += imgH) {
                         g2.drawImage(backgroundImage, x, y, null);
                     }
                 }
+                g2.setComposite(oldComposite);
             }
 
             g2.setColor(Color.BLACK);
@@ -548,6 +625,10 @@ public class Viewer extends JFrame {
             }
 
             for (Poly p : polysSnapshot) {
+                if (p.texture != null) {
+                    fillTexturedPolygon(g2, p, cx, cy);
+                    continue;
+                }
                 int n = p.vertices.length;
                 int[] xs = new int[n];
                 int[] ys = new int[n];

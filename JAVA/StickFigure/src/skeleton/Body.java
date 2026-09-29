@@ -58,6 +58,11 @@ public class Body {
     public List<Anchor> anchors = new ArrayList<>();
     private int anchorCounter = 0;
 
+    // optional cut-out skin: bones it has a cut for draw as that cut, the rest
+    // keep their default shape. Not touched by buildFromConfig/loadPose, so it
+    // stays put across pose reloads (cuts are keyed by bone name).
+    public Skin skin;
+
     // world units a click may be from a tip/anchor and still count as "on" it.
     private static final double ANCHOR_CLICK_RADIUS = 0.15;
 
@@ -701,7 +706,12 @@ public class Body {
     // -------------------------------------------------------------------------
     public void draw() {
         for (Bone b : bone) {
-            b.draw();
+            List<TupleD> cut = skin != null ? skin.cutFor(b.name) : null;
+            if (cut != null) {
+                b.drawCut(cut, skin.textureFor(b.name));
+            } else {
+                b.draw();
+            }
         }
         for (Anchor a : anchors) {
             Color markerColor = a.angleEnabled ? Color.RED : Color.YELLOW;

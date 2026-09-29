@@ -1,5 +1,8 @@
 package skeleton;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.util.List;
 import main.Main;
 import skeleton.attachables.Attachable;
 import utils.TupleD;
@@ -53,6 +56,53 @@ public class Bone {
         double majorRadius = tips[1].position.sub(tips[0].position).length() / 2.0;
         double minorRadius = majorRadius / 3.0;
         Main.viewer.drawEllipse(center, majorRadius, minorRadius, angle());
+    }
+
+    // -------------------------------------------------------------------------
+    // draws this bone as its skin cut (see Skin) instead of the default shape:
+    // the cut polygon, filled with `texture` laid out in this bone's own
+    // local frame (so it moves/rotates with the bone), or flat in
+    // skinColor() if texture is null -- black outline either way.
+    public void drawCut(List<TupleD> cut, BufferedImage texture) {
+        TupleD[] world = new TupleD[cut.size()];
+        for (int i = 0; i < world.length; i++) {
+            world[i] = localToWorld(cut.get(i));
+        }
+        if (texture != null) {
+            Main.viewer.drawTexturedPolygon(cut.toArray(new TupleD[0]), tips[0].position, angle(), texture);
+        } else {
+            Main.viewer.drawPolygon(world, skinColor());
+        }
+        for (int i = 0; i < world.length; i++) {
+            Main.viewer.drawLine(world[i], world[(i + 1) % world.length]);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // fill color for a skin cut -- the same color the default shape uses, so
+    // swapping ellipses for cuts changes shapes, not the figure's look.
+    protected Color skinColor() {
+        return Color.RED;
+    }
+
+    // -------------------------------------------------------------------------
+    // this bone's LOCAL frame: origin at tip0, x-axis along tip0->tip1, world
+    // units. Anything stored in it (e.g. a skin cut) follows the bone rigidly
+    // in any pose. The single definition of that frame -- the game's renderer
+    // and editor.SkinEditor both go through these two methods.
+    public TupleD localToWorld(TupleD local) {
+        double c = Math.cos(angle());
+        double s = Math.sin(angle());
+        return tips[0].position.add(new TupleD(local.first * c - local.second * s,
+                local.first * s + local.second * c));
+    }
+
+    // -------------------------------------------------------------------------
+    public TupleD worldToLocal(TupleD world) {
+        TupleD d = world.sub(tips[0].position);
+        double c = Math.cos(angle());
+        double s = Math.sin(angle());
+        return new TupleD(d.first * c + d.second * s, -d.first * s + d.second * c);
     }
 
     // -------------------------------------------------------------------------

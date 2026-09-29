@@ -3,16 +3,16 @@
     "Name": "Stan",
     "RootPosition": [-1.1430718991048086, 0.19893845167760538],
     "Bones": [
-      {"Name": "torso", "Tip0": "hip", "Tip1": "shoulder", "Length": 0.6, "Angle": 113.59261116941894, "Mass": 8.0},
-      {"Name": "upperArmL", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.3, "Angle": 148.88738798586877, "Mass": 1.5},
-      {"Name": "foreArmL", "Tip0": "elbow", "Tip1": "hand", "Length": 0.3, "Angle": 121.8075939597407, "Mass": 1.0},
-      {"Name": "upperArmR", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.3, "Angle": 177.76882539196873, "Mass": 1.5},
-      {"Name": "foreArmR", "Tip0": "elbow", "Tip1": "hand", "Length": 0.3, "Angle": 159.61202815038746, "Mass": 1.0},
+      {"Name": "torso", "Tip0": "hip", "Tip1": "shoulder", "Length": 0.5, "Angle": 113.59261116941894, "Mass": 8.0},
+      {"Name": "upperArmL", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.4, "Angle": 148.88738798586877, "Mass": 1.5},
+      {"Name": "foreArmL", "Tip0": "elbow", "Tip1": "hand", "Length": 0.4, "Angle": 121.8075939597407, "Mass": 1.0},
+      {"Name": "upperArmR", "Tip0": "shoulder", "Tip1": "elbow", "Length": 0.4, "Angle": 177.76882539196873, "Mass": 1.5},
+      {"Name": "foreArmR", "Tip0": "elbow", "Tip1": "hand", "Length": 0.4, "Angle": 159.61202815038746, "Mass": 1.0},
       {"Name": "thighL", "Tip0": "hip", "Tip1": "knee", "Length": 0.4, "Angle": -41.073488524382036, "Mass": 3.0},
       {"Name": "shinL", "Tip0": "knee", "Tip1": "foot", "Length": 0.4, "Angle": -8.725194648871488, "Mass": 2.0},
       {"Name": "thighR", "Tip0": "hip", "Tip1": "knee", "Length": 0.4, "Angle": -15.592019539245461, "Mass": 3.0},
       {"Name": "shinR", "Tip0": "knee", "Tip1": "foot", "Length": 0.4, "Angle": -12.234923294724089, "Mass": 2.0},
-      {"Name": "head", "Tip0": "neck", "Tip1": "head", "Length": 0.2, "Angle": 115.51114038809436, "Mass": 2.0, "Type": "head"}
+      {"Name": "head", "Tip0": "neck", "Tip1": "head", "Length": 0.3, "Angle": 115.51114038809436, "Mass": 2.0, "Type": "head"}
     ],
     "Attachables": [
       {"name": "shoulderL", "Type": "joint", "Bone0": "torso", "TipIdx0": 1, "Bone1": "upperArmL", "TipIdx1": 0},

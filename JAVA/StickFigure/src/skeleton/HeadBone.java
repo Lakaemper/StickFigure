@@ -26,6 +26,12 @@ public class HeadBone extends Bone {
         Main.viewer.drawLine(tip0, half);
 
         TupleD headCenter = tip0.add(delta.times(2.0 / 3.0));
-        Main.viewer.drawFilledCircle(headCenter, length / 2.0, Color.ORANGE);
+        Main.viewer.drawFilledCircle(headCenter, length / 2.0, skinColor());
+    }
+
+    // -------------------------------------------------------------------------
+    @Override
+    protected Color skinColor() {
+        return Color.ORANGE;
     }
 }
