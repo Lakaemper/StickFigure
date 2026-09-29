@@ -16,12 +16,13 @@ import utils.Json;
 // stored -- bone lengths come from whatever skeleton plays it, and forward
 // motion isn't stored at all: ClipPlayer derives it by keeping the stance
 // foot planted. File format:
-//   {"Type":"Animation", "Duration":1.0, "Loop":true,
+//   {"Type":"Animation", "Duration":1.0, "Loop":true, "Direction":-1,
 //    "Keys":[{"T":0.0, "Stance":"shinL_foot", "Angles":{"torso":94.0, ...}}, ...]}
 public class AnimationClip {
 
     public final double duration;
     public final boolean loop;
+    public final double direction; // -1 walks toward -x, +1 toward +x, 0 in place/unknown
     private final List<Key> keys;
 
     public static class Key {
@@ -37,9 +38,10 @@ public class AnimationClip {
     }
 
     // -------------------------------------------------------------------------
-    private AnimationClip(double duration, boolean loop, List<Key> keys) {
+    private AnimationClip(double duration, boolean loop, double direction, List<Key> keys) {
         this.duration = duration;
         this.loop = loop;
+        this.direction = direction;
         this.keys = keys;
     }
 
@@ -52,6 +54,7 @@ public class AnimationClip {
         }
         double duration = ((Number) root.get("Duration")).doubleValue();
         boolean loop = !Boolean.FALSE.equals(root.get("Loop"));
+        double direction = root.get("Direction") instanceof Number ? ((Number) root.get("Direction")).doubleValue() : 0.0;
         List<Key> keys = new ArrayList<>();
         for (Object o : (List<Object>) root.get("Keys")) {
             Map<String, Object> k = (Map<String, Object>) o;
@@ -65,7 +68,7 @@ public class AnimationClip {
             throw new IOException(path + " needs at least 2 keys");
         }
         keys.sort((a, b) -> Double.compare(a.t, b.t));
-        return new AnimationClip(duration, loop, keys);
+        return new AnimationClip(duration, loop, direction, keys);
     }
 
     // -------------------------------------------------------------------------
@@ -82,7 +85,7 @@ public class AnimationClip {
             }
             m.add(new Key(k.t, k.stance, angles));
         }
-        return new AnimationClip(duration, loop, m);
+        return new AnimationClip(duration, loop, -direction, m);
     }
 
     // -------------------------------------------------------------------------

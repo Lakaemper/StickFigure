@@ -1,6 +1,7 @@
 {
   "Type": "Animation",
   "Name": "Walk_L",
+  "Direction": -1,
   "Duration": 0.8000,
   "Loop": true,
   "Keys": [

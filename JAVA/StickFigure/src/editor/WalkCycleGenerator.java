@@ -52,7 +52,7 @@ public class WalkCycleGenerator {
         double halfStance = STEP_LENGTH * STANCE_FRACTION;
 
         StringBuilder sb = new StringBuilder();
-        sb.append("{\n  \"Type\": \"Animation\",\n  \"Name\": \"Walk_L\",\n");
+        sb.append("{\n  \"Type\": \"Animation\",\n  \"Name\": \"Walk_L\",\n  \"Direction\": -1,\n"); // walks toward -x
         sb.append(String.format(Locale.ROOT, "  \"Duration\": %.4f,\n  \"Loop\": true,\n  \"Keys\": [\n", CYCLE_SECONDS));
         for (int k = 0; k < KEYS; k++) {
             double phase = (double) k / KEYS;

@@ -46,6 +46,26 @@ public class Polygon {
     }
 
     // -------------------------------------------------------------------------
+    // heights of every UPWARD-facing edge crossing the vertical line at x --
+    // the surfaces something could stand on there, one per ledge (a rock
+    // with an overhang has several). Relies on counter-clockwise winding: an
+    // edge running right-to-left has its outward normal pointing up, so the
+    // underside of an overhang (left-to-right) is never mistaken for ground.
+    public List<Double> topSurfaceHeightsAt(double x) {
+        List<Double> heights = new java.util.ArrayList<>();
+        int n = vertices.length;
+        for (int i = 0; i < n; i++) {
+            TupleD a = vertices[i];
+            TupleD b = vertices[(i + 1) % n];
+            if (b.first < a.first && x >= b.first && x < a.first) {
+                double u = (x - a.first) / (b.first - a.first);
+                heights.add(a.second + u * (b.second - a.second));
+            }
+        }
+        return heights;
+    }
+
+    // -------------------------------------------------------------------------
     // the closest point ON the polygon's boundary to p (clamped per-edge
     // projection, so this is correct for concave polygons too, not just
     // convex ones), and that edge's outward-pointing unit normal -- assumes

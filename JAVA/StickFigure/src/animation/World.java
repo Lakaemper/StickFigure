@@ -54,6 +54,36 @@ public class World {
     }
 
     // -------------------------------------------------------------------------
+    // the highest ground surface at x between fromY (above) and toY (below)
+    // -- the floor (y=0) or any rock's upward-facing edge -- or NaN if there
+    // is none in that window. A short vertical ray, not one from the sky, so
+    // a ledge or overhang top far above never counts as "the ground here".
+    public double groundHeight(double x, double fromY, double toY) {
+        double best = Double.NaN;
+        if (fromY >= 0.0 && toY <= 0.0) {
+            best = 0.0;
+        }
+        for (Polygon obstacle : obstacles) {
+            for (double y : obstacle.topSurfaceHeightsAt(x)) {
+                if (y <= fromY && y >= toY && !(y <= best)) {
+                    best = y;
+                }
+            }
+        }
+        return best;
+    }
+
+    // -------------------------------------------------------------------------
+    public boolean insideObstacle(TupleD p) {
+        for (Polygon obstacle : obstacles) {
+            if (obstacle.contains(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
     public void step() {
         double subDt = dt / substeps;
         for (int s = 0; s < substeps; s++) {
